@@ -1,0 +1,1 @@
+﻿"""Slot schemas/models."""

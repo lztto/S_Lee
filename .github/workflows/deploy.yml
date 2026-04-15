@@ -1,0 +1,1 @@
+﻿name: Deploy`r`n`r`non:`r`n  workflow_dispatch:`r`n`r`njobs:`r`n  deploy:`r`n    runs-on: ubuntu-latest`r`n    steps:`r`n      - uses: actions/checkout@v4

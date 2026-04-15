@@ -1,0 +1,1 @@
+﻿"""Journal CRUD helpers."""

@@ -1,0 +1,1 @@
+﻿name: CI`r`n`r`non:`r`n  push:`r`n  pull_request:`r`n`r`njobs:`r`n  test:`r`n    runs-on: ubuntu-latest`r`n    steps:`r`n      - uses: actions/checkout@v4
