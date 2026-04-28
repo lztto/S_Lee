@@ -26,14 +26,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
  
+
 # ─── 라우터 등록 ───
-# 팀원들이 API 완성하면 여기에 추가
-# from app.api.v1 import auth, slots, reservations, journals, counselors
-# app.include_router(auth.router, prefix="/api/v1")
-# app.include_router(slots.router, prefix="/api/v1")
-# app.include_router(reservations.router, prefix="/api/v1")
-# app.include_router(journals.router, prefix="/api/v1")
-# app.include_router(counselors.router, prefix="/api/v1")
+from app.api.v1 import counselors
+app.include_router(counselors.router, prefix="/api/v1")
  
  
 # ─── 헬스체크 ───
