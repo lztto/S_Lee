@@ -1,1 +1,4 @@
-﻿export default function AdminPage() {`r`n  return <div>AdminPage</div>;`r`n}
+﻿const AdminPage = () => {
+  return <div>관리자 페이지</div>
+}
+export default AdminPage

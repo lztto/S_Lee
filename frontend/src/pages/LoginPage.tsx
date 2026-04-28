@@ -1,1 +1,5 @@
-﻿export default function LoginPage() {`r`n  return <div>LoginPage</div>;`r`n}
+﻿// LoginPage.tsx
+const LoginPage = () => {
+  return <div>로그인 페이지</div>
+}
+export default LoginPage
