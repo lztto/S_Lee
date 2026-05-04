@@ -6,8 +6,8 @@ from app.core.config import settings
  
 # ─── FastAPI 앱 생성 ───
 app = FastAPI(
-    title="프라이빗 심리/코칭 예약 플랫폼",
-    description="DevTriple 팀 - 상담사 예약 및 일지 관리 API",
+    title="S.LEE — Secret Counseling",
+description="S.LEE Secret Counseling API",
     version="1.0.0",
     docs_url="/docs",      # Swagger UI 주소
     redoc_url="/redoc",    # ReDoc 주소
@@ -28,9 +28,12 @@ app.add_middleware(
  
 
 # ─── 라우터 등록 ───
-from app.api.v1 import counselors
+from app.api.v1 import counselors, auth, slots, reservations
+
+app.include_router(reservations.router, prefix="/api/v1")
 app.include_router(counselors.router, prefix="/api/v1")
- 
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(slots.router, prefix="/api/v1")
  
 # ─── 헬스체크 ───
 @app.get("/")
@@ -44,3 +47,5 @@ async def health_check():
         },
         "message": "success"
     }
+from app.api.v1 import counselors, auth, slots
+

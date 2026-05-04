@@ -13,8 +13,12 @@ pydantic-settings==2.5.2
  
 # ─── 인증 ───
 python-jose[cryptography]==3.3.0   # JWT 토큰
-passlib[bcrypt]==1.7.4             # 비밀번호 해싱
+passlib[bcrypt]==1.7.4  # 비밀번호 해싱
+bcrypt==4.0.1          
 python-multipart==0.0.9            # form 데이터 처리
  
 # ─── 유틸리티 ───
 python-dotenv==1.0.1
+
+# 이메일 형식 확인
+pydantic[email]==2.9.2
