@@ -78,21 +78,33 @@ const MainPage = () => {
           {user ? (
             <>
               <span className="text-sm px-2" style={{ color: '#9E8E84' }}>{user.name}님</span>
+              
+              {/* 상담사 전용 버튼 */}
               {user.role === 'counselor' && (
                 <button
                   onClick={() => navigate('/dashboard')}
-                  className="px-4 py-1.5 rounded-full text-sm transition-all"
+                  className="px-4 py-1.5 rounded-full text-sm transition-all hover:bg-gray-50"
                   style={{ border: '1px solid #DDD5C8', color: '#6B5B4E', background: 'transparent' }}
                 >대시보드</button>
               )}
+
+              {/* 🔥 추가된 관리자 전용 버튼 🔥 */}
+              {user.role === 'admin' && (
+                <button
+                  onClick={() => navigate('/admin')}
+                  className="px-4 py-1.5 rounded-full text-sm transition-all hover:bg-gray-50"
+                  style={{ border: '1px solid #DDD5C8', color: '#6B5B4E', background: 'transparent' }}
+                >관리자 페이지</button>
+              )}
+
               <button
                 onClick={() => navigate('/my-reservations')}
-                className="px-4 py-1.5 rounded-full text-sm transition-all"
+                className="px-4 py-1.5 rounded-full text-sm transition-all hover:bg-gray-50"
                 style={{ border: '1px solid #DDD5C8', color: '#6B5B4E', background: 'transparent' }}
               >내 예약</button>
               <button
                 onClick={handleLogout}
-                className="px-4 py-1.5 rounded-full text-sm transition-all"
+                className="px-4 py-1.5 rounded-full text-sm transition-all hover:opacity-90"
                 style={{ background: '#2C2420', color: '#FAF8F5' }}
               >로그아웃</button>
             </>
@@ -100,12 +112,12 @@ const MainPage = () => {
             <>
               <button
                 onClick={() => navigate('/login')}
-                className="px-4 py-1.5 rounded-full text-sm transition-all"
+                className="px-4 py-1.5 rounded-full text-sm transition-all hover:bg-gray-50"
                 style={{ border: '1px solid #DDD5C8', color: '#6B5B4E', background: 'transparent' }}
               >로그인</button>
               <button
                 onClick={() => navigate('/signup')}
-                className="px-4 py-1.5 rounded-full text-sm transition-all"
+                className="px-4 py-1.5 rounded-full text-sm transition-all hover:opacity-90"
                 style={{ background: '#2C2420', color: '#FAF8F5' }}
               >회원가입</button>
             </>

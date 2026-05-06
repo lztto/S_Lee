@@ -23,9 +23,8 @@ const LoginPage = () => {
       setAuth(user, access_token)
 
       // 역할에 따라 다른 페이지로 이동
-      if (user.role === 'admin') navigate('/admin')
-      else if (user.role === 'counselor') navigate('/dashboard')
-      else navigate('/')
+      if (user.role === 'counselor') navigate('/dashboard')
+      else navigate('/') // 관리자(admin)와 내담자(client)는 모두 메인 화면으로 이동
 
     } catch (err: any) {
       setError(err.response?.data?.detail || '로그인에 실패했습니다')
