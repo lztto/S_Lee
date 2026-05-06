@@ -7,7 +7,7 @@ from app.core.config import settings
 # ─── FastAPI 앱 생성 ───
 app = FastAPI(
     title="S.LEE — Secret Counseling",
-description="S.LEE Secret Counseling API",
+    description="S.LEE Secret Counseling API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -26,13 +26,13 @@ app.add_middleware(
 )
 
 # ─── 라우터 등록 ───
-from app.api.v1 import auth, counselors, reservations, slots, journals
+# auth, journals 는 각 담당 팀원이 완성 후 추가
+from app.api.v1 import auth, counselors, reservations, slots
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(counselors.router, prefix="/api/v1")
 app.include_router(reservations.router, prefix="/api/v1")
 app.include_router(slots.router, prefix="/api/v1")
-app.include_router(journals.router, prefix="/api/v1")
 
 
 # ─── 헬스체크 ───
@@ -47,5 +47,3 @@ async def health_check():
         },
         "message": "success"
     }
-from app.api.v1 import counselors, auth, slots
-
