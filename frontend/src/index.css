@@ -1,1 +1,5 @@
-@import 'tailwindcss';
+@import "tailwindcss";
+
+*, *::before, *::after {
+  color-scheme: light only;
+}

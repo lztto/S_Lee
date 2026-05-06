@@ -6,8 +6,8 @@ from app.core.config import settings
 
 # ─── FastAPI 앱 생성 ───
 app = FastAPI(
-    title="프라이빗 심리/코칭 예약 플랫폼",
-    description="DevTriple 팀 - 상담사 예약 및 일지 관리 API",
+    title="S.LEE — Secret Counseling",
+description="S.LEE Secret Counseling API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -47,3 +47,5 @@ async def health_check():
         },
         "message": "success"
     }
+from app.api.v1 import counselors, auth, slots
+
