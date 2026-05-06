@@ -3,317 +3,244 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import api from '../services/api'
 
-interface Counselor {
+interface CounselorDetail {
   id: string
   name: string
   email: string
-  available_slots: Slot[]
 }
 
-interface Slot {
+interface SlotItem {
   id: string
   start_time: string
   end_time: string
   is_available: boolean
 }
 
-const ReservationPage = () => {
+export default function ReservationPage() {
   const { counselorId } = useParams<{ counselorId: string }>()
   const navigate = useNavigate()
-  const { user, token } = useAuthStore()
-  const [counselor, setCounselor] = useState<Counselor | null>(null)
+  const { user } = useAuthStore()
+
+  const [counselor, setCounselor] = useState<CounselorDetail | null>(null)
+  const [slots, setSlots] = useState<SlotItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null)
   const [reserving, setReserving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
-  const [error, setError] = useState('')
 
   useEffect(() => {
-    const fetchCounselor = async () => {
-      try {
-        const res = await api.get(`/counselors/${counselorId}`)
-        setCounselor(res.data.data)
-      } catch (err) {
-        console.error(err)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchCounselor()
+    fetchData()
   }, [counselorId])
 
-  // 날짜별로 슬롯 그룹화
-  const groupSlotsByDate = (slots: Slot[]) => {
-    const groups: { [date: string]: Slot[] } = {}
-    slots.forEach(slot => {
-      const date = new Date(slot.start_time).toLocaleDateString('ko-KR', {
-        month: 'long',
-        day: 'numeric',
-        weekday: 'short'
-      })
-      if (!groups[date]) groups[date] = []
-      groups[date].push(slot)
-    })
-    return groups
-  }
-
-  const formatTime = (timeStr: string) => {
-    return new Date(timeStr).toLocaleTimeString('ko-KR', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    })
+  const fetchData = async () => {
+    try {
+      setLoading(true)
+      const [counselorRes, slotsRes] = await Promise.all([
+        api.get(`/counselors/${counselorId}`),
+        api.get(`/counselors/${counselorId}/slots`),
+      ])
+      setCounselor(counselorRes.data.data)
+      setSlots(slotsRes.data.data)
+    } catch {
+      setError('상담사 정보를 불러오지 못했습니다.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleReserve = async () => {
-    if (!token) {
+    if (!selectedSlotId) return
+    if (!user) {
       navigate('/login')
       return
     }
-    if (!selectedSlot) return
-
-    setReserving(true)
-    setError('')
-
     try {
-      await api.post('/reservations/', { slot_id: selectedSlot.id })
+      setReserving(true)
+      setError(null)
+      await api.post('/reservations', { slot_id: selectedSlotId })
       setSuccess(true)
-    } catch (err: any) {
-      setError(err.response?.data?.detail || '예약에 실패했습니다')
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? '예약에 실패했습니다. 다시 시도해주세요.')
     } finally {
       setReserving(false)
     }
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#FAF8F5' }}>
-        <div className="flex gap-2">
-          {[0, 1, 2].map(i => (
-            <span key={i} className="w-2 h-2 rounded-full animate-bounce inline-block"
-              style={{ background: '#DDD5C8', animationDelay: `${i * 0.15}s` }} />
-          ))}
-        </div>
-      </div>
-    )
+  const formatDateTime = (iso: string) => {
+    const d = new Date(iso)
+    return {
+      date: d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }),
+      time: d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+    }
   }
 
-  if (!counselor) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#FAF8F5' }}>
-        <p style={{ color: '#9E8E84' }}>상담사를 찾을 수 없습니다</p>
-      </div>
-    )
+  const getDuration = (start: string, end: string) => {
+    const diff = (new Date(end).getTime() - new Date(start).getTime()) / 60000
+    return `${diff}분`
   }
+
+  const availableSlots = slots.filter(
+    (s) => s.is_available && new Date(s.start_time) >= new Date()
+  )
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#FAF8F5', fontFamily: "'DM Sans', sans-serif" }}>
-        <div className="text-center max-w-sm px-8">
-          <div className="text-5xl mb-6">✦</div>
-          <h2 className="text-2xl mb-3 tracking-tight"
-            style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontWeight: 400 }}>
-            예약이 완료되었습니다
-          </h2>
-          <p className="text-sm mb-2 font-light" style={{ color: '#9E8E84' }}>
-            {counselor.name} 상담사
-          </p>
-          <p className="text-sm mb-8 font-light" style={{ color: '#C4A882' }}>
-            {formatTime(selectedSlot!.start_time)} — {formatTime(selectedSlot!.end_time)}
+      <div className="min-h-screen flex items-center justify-center" style={{ background: '#FAF8F5' }}>
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&display=swap');`}</style>
+        <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '48px 40px', textAlign: 'center', maxWidth: '400px' }}>
+          <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#F0F5EE', margin: '0 auto 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>✓</div>
+          <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: '22px', fontWeight: 400, color: '#2C2420', marginBottom: '12px' }}>예약 완료</h2>
+          <p className="text-sm font-light" style={{ color: '#9E8E84', marginBottom: '28px' }}>
+            {counselor?.name} 상담사와의 예약이 확정되었습니다.
           </p>
           <button
             onClick={() => navigate('/my-reservations')}
-            className="w-full h-11 rounded-xl text-sm font-medium"
-            style={{ background: '#2C2420', color: '#FAF8F5' }}
+            className="px-6 py-2 rounded-full text-sm font-medium"
+            style={{ background: '#2C2420', color: '#FAF8F5', border: 'none', cursor: 'pointer' }}
           >
             내 예약 확인하기
-          </button>
-          <button
-            onClick={() => navigate('/')}
-            className="w-full h-11 rounded-xl text-sm font-medium mt-3"
-            style={{ border: '1px solid #EDE8E0', color: '#9E8E84', background: 'transparent' }}
-          >
-            메인으로 돌아가기
           </button>
         </div>
       </div>
     )
   }
 
-  const slotGroups = groupSlotsByDate(counselor.available_slots)
-
   return (
     <div className="min-h-screen" style={{ background: '#FAF8F5', fontFamily: "'DM Sans', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&display=swap');`}</style>
 
-      {/* 네비게이션 */}
-      <nav
-        className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-12 h-16"
-        style={{ background: 'rgba(250,248,245,0.92)', backdropFilter: 'blur(12px)', borderBottom: '1px solid #EDE8E0' }}
-      >
-        <div className="cursor-pointer" onClick={() => navigate('/')}>
-          <div className="font-medium tracking-tight"
-            style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontSize: '18px' }}>
-            S<span style={{ color: '#C4A882' }}>.</span>LEE
-          </div>
-          <div className="tracking-widest uppercase" style={{ color: '#C4A882', fontSize: '9px' }}>
-            Secret Counseling
-          </div>
-        </div>
+      {/* 헤더 */}
+      <div style={{ background: 'rgba(250,248,245,0.92)', backdropFilter: 'blur(12px)', borderBottom: '1px solid #EDE8E0', height: '64px', padding: '0 40px', display: 'flex', alignItems: 'center', position: 'sticky', top: 0, zIndex: 10 }}>
         <button
-          onClick={() => navigate(-1)}
-          className="text-sm px-4 py-1.5 rounded-full transition-all"
-          style={{ border: '1px solid #EDE8E0', color: '#9E8E84', background: 'transparent' }}
+          onClick={() => navigate('/')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9E8E84', fontSize: '14px' }}
         >
-          ← 돌아가기
+          ← 목록으로
         </button>
-      </nav>
+        <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: '18px', fontWeight: 400, color: '#2C2420', margin: '0 auto' }}>
+          상담사 예약
+        </h1>
+      </div>
 
-      <div className="max-w-4xl mx-auto px-8 pt-32 pb-24">
-
-        {/* 상담사 정보 */}
-        <div className="flex items-start gap-6 mb-12 pb-10" style={{ borderBottom: '1px solid #EDE8E0' }}>
-          <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-semibold flex-shrink-0"
-            style={{ background: '#F5EFE6', color: '#8B6F47', fontFamily: "'Playfair Display', serif" }}
-          >
-            {counselor.name.charAt(0)}
-          </div>
-          <div>
-            <p className="text-xs tracking-widest uppercase mb-2" style={{ color: '#C4A882' }}>
-              심리 · 코칭 상담
-            </p>
-            <h1 className="text-2xl mb-1 tracking-tight"
-              style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontWeight: 400 }}>
-              {counselor.name} 상담사
-            </h1>
-            <p className="text-sm font-light" style={{ color: '#9E8E84' }}>{counselor.email}</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-          {/* 왼쪽 - 슬롯 캘린더 */}
-          <div className="lg:col-span-2">
-            <h2 className="text-sm font-medium mb-6 tracking-widest uppercase" style={{ color: '#C4A882' }}>
-              예약 가능한 시간
-            </h2>
-
-            {Object.keys(slotGroups).length === 0 ? (
-              <div className="text-center py-16 rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0' }}>
-                <p className="text-sm font-light" style={{ color: '#C4A882' }}>
-                  현재 예약 가능한 시간이 없습니다
-                </p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-6">
-                {Object.entries(slotGroups).map(([date, slots]) => (
-                  <div key={date}>
-                    <p className="text-xs font-medium mb-3 px-1" style={{ color: '#9E8E84' }}>{date}</p>
-                    <div className="flex flex-wrap gap-2">
-                      {slots.map(slot => (
-                        <button
-                          key={slot.id}
-                          onClick={() => slot.is_available && setSelectedSlot(slot)}
-                          disabled={!slot.is_available}
-                          className="px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200"
-                          style={{
-                            background: !slot.is_available
-                              ? '#F5F2EE'
-                              : selectedSlot?.id === slot.id
-                                ? '#2C2420'
-                                : '#fff',
-                            color: !slot.is_available
-                              ? '#C4A882'
-                              : selectedSlot?.id === slot.id
-                                ? '#FAF8F5'
-                                : '#2C2420',
-                            border: selectedSlot?.id === slot.id
-                              ? 'none'
-                              : '1px solid #EDE8E0',
-                            cursor: slot.is_available ? 'pointer' : 'not-allowed',
-                            textDecoration: !slot.is_available ? 'line-through' : 'none',
-                          }}
-                        >
-                          {formatTime(slot.start_time)} — {formatTime(slot.end_time)}
-                        </button>
-                      ))}
-                    </div>
+      <div style={{ maxWidth: '680px', margin: '0 auto', padding: '40px 24px' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '80px 0', color: '#9E8E84' }}>불러오는 중...</div>
+        ) : error && !counselor ? (
+          <div style={{ textAlign: 'center', padding: '80px 0', color: '#C0392B' }}>{error}</div>
+        ) : (
+          <>
+            {/* 상담사 프로필 카드 */}
+            {counselor && (
+              <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '28px', marginBottom: '28px' }}>
+                <p className="text-xs font-medium tracking-widest uppercase" style={{ color: '#C4A882', marginBottom: '6px' }}>Counselor</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <div style={{ width: '52px', height: '52px', borderRadius: '14px', background: '#F5F0E8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Playfair Display', serif", fontSize: '20px', color: '#C4A882', flexShrink: 0 }}>
+                    {counselor.name.charAt(0)}
                   </div>
-                ))}
+                  <div>
+                    <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: '20px', fontWeight: 400, color: '#2C2420', margin: '0 0 4px' }}>
+                      {counselor.name} 상담사
+                    </h2>
+                    <p className="text-sm font-light" style={{ color: '#9E8E84', margin: 0 }}>{counselor.email}</p>
+                  </div>
+                </div>
               </div>
             )}
-          </div>
 
-          {/* 오른쪽 - 예약 확인 */}
-          <div>
-            <h2 className="text-sm font-medium mb-6 tracking-widest uppercase" style={{ color: '#C4A882' }}>
-              예약 확인
-            </h2>
-            <div className="rounded-2xl p-6 sticky top-24" style={{ background: '#fff', border: '1px solid #EDE8E0' }}>
+            {/* 슬롯 선택 */}
+            <div>
+              <p className="text-xs font-medium tracking-widest uppercase" style={{ color: '#C4A882', marginBottom: '8px' }}>Available Slots</p>
+              <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: '18px', fontWeight: 400, color: '#2C2420', marginBottom: '16px' }}>
+                예약 가능한 시간
+              </h3>
 
-              {selectedSlot ? (
-                <>
-                  <p className="text-xs font-medium mb-4 tracking-widest uppercase" style={{ color: '#C4A882' }}>
-                    선택한 시간
-                  </p>
-                  <p className="text-base mb-1" style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontWeight: 400 }}>
-                    {new Date(selectedSlot.start_time).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })}
-                  </p>
-                  <p className="text-sm mb-6 font-light" style={{ color: '#9E8E84' }}>
-                    {formatTime(selectedSlot.start_time)} — {formatTime(selectedSlot.end_time)}
-                  </p>
-
-                  <div className="h-px mb-6" style={{ background: '#F5F0E8' }} />
-
-                  <p className="text-xs mb-1" style={{ color: '#9E8E84' }}>상담사</p>
-                  <p className="text-sm mb-6" style={{ color: '#2C2420' }}>{counselor.name} 상담사</p>
-
-                  {error && (
-                    <p className="text-xs px-3 py-2 rounded-lg mb-4" style={{ background: '#FEF2F2', color: '#DC2626' }}>
-                      {error}
-                    </p>
-                  )}
-
-                  {!token ? (
-                    <button
-                      onClick={() => navigate('/login')}
-                      className="w-full h-11 rounded-xl text-sm font-medium"
-                      style={{ background: '#2C2420', color: '#FAF8F5' }}
-                    >
-                      로그인 후 예약하기
-                    </button>
-                  ) : user?.role !== 'client' ? (
-                    <p className="text-xs text-center" style={{ color: '#C4A882' }}>
-                      고객 계정으로만 예약할 수 있습니다
-                    </p>
-                  ) : (
-                    <button
-                      onClick={handleReserve}
-                      disabled={reserving}
-                      className="w-full h-11 rounded-xl text-sm font-medium transition-all"
-                      style={{
-                        background: reserving ? '#9E8E84' : '#2C2420',
-                        color: '#FAF8F5',
-                        cursor: reserving ? 'not-allowed' : 'pointer'
-                      }}
-                    >
-                      {reserving ? '예약 중...' : '예약하기'}
-                    </button>
-                  )}
-                </>
+              {availableSlots.length === 0 ? (
+                <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '40px', textAlign: 'center', color: '#9E8E84' }}>
+                  <p style={{ fontSize: '15px', marginBottom: '6px' }}>현재 예약 가능한 슬롯이 없습니다.</p>
+                  <p className="text-sm font-light">나중에 다시 확인해주세요.</p>
+                </div>
               ) : (
-                <div className="text-center py-8">
-                  <p className="text-sm font-light" style={{ color: '#C4A882' }}>
-                    왼쪽에서 원하는<br />시간을 선택해주세요
-                  </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
+                  {availableSlots.map((slot) => {
+                    const { date, time } = formatDateTime(slot.start_time)
+                    const duration = getDuration(slot.start_time, slot.end_time)
+                    const isSelected = selectedSlotId === slot.id
+
+                    return (
+                      <div
+                        key={slot.id}
+                        onClick={() => setSelectedSlotId(slot.id)}
+                        className="rounded-2xl"
+                        style={{
+                          background: '#fff',
+                          border: isSelected ? '1.5px solid #2C2420' : '1px solid #EDE8E0',
+                          padding: '18px 22px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) (e.currentTarget as HTMLDivElement).style.borderColor = '#C4A882'
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) (e.currentTarget as HTMLDivElement).style.borderColor = '#EDE8E0'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: isSelected ? '#2C2420' : '#C4A882', flexShrink: 0 }} />
+                          <div>
+                            <p style={{ fontWeight: 500, color: '#2C2420', margin: '0 0 2px', fontSize: '14px' }}>{date}</p>
+                            <p className="text-sm font-light" style={{ color: '#9E8E84', margin: 0 }}>{time} · {duration}</p>
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <span style={{ background: '#F5F0E8', color: '#C4A882', borderRadius: '100px', padding: '3px 12px', fontSize: '11px', fontWeight: 500 }}>
+                            선택됨
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
+
+              {/* 에러 */}
+              {error && (
+                <p className="text-sm" style={{ color: '#C0392B', marginBottom: '12px' }}>{error}</p>
+              )}
+
+              {/* 예약 버튼 */}
+              {availableSlots.length > 0 && (
+                <button
+                  onClick={handleReserve}
+                  disabled={!selectedSlotId || reserving}
+                  className="rounded-full text-sm font-medium"
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    background: !selectedSlotId ? '#EDE8E0' : reserving ? '#C4A882' : '#2C2420',
+                    color: !selectedSlotId ? '#9E8E84' : '#FAF8F5',
+                    border: 'none',
+                    cursor: !selectedSlotId || reserving ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (selectedSlotId && !reserving) (e.currentTarget.style.background = '#C4A882')
+                  }}
+                  onMouseLeave={(e) => {
+                    if (selectedSlotId && !reserving) (e.currentTarget.style.background = '#2C2420')
+                  }}
+                >
+                  {reserving ? '예약 중...' : !selectedSlotId ? '시간을 선택해주세요' : '예약 확정하기'}
+                </button>
+              )}
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     </div>
   )
 }
-
-export default ReservationPage

@@ -1,40 +1,40 @@
 ﻿"""Backend entrypoint."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
- 
+
 from app.core.config import settings
- 
+
 # ─── FastAPI 앱 생성 ───
 app = FastAPI(
     title="S.LEE — Secret Counseling",
-description="S.LEE Secret Counseling API",
+    description="S.LEE Secret Counseling API",
     version="1.0.0",
-    docs_url="/docs",      # Swagger UI 주소
-    redoc_url="/redoc",    # ReDoc 주소
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
- 
+
 # ─── CORS 설정 ───
-# 프론트엔드(React)에서 API 호출 허용
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        settings.FRONTEND_URL,       # 개발: http://localhost:5173
-        "https://vercel.app",        # 배포: Vercel 도메인
+        settings.FRONTEND_URL,
+        "https://vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
- 
 
 # ─── 라우터 등록 ───
-from app.api.v1 import counselors, auth, slots, reservations
+# auth, journals 는 각 담당 팀원이 완성 후 추가
+from app.api.v1 import auth, counselors, reservations, slots
 
-app.include_router(reservations.router, prefix="/api/v1")
-app.include_router(counselors.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(counselors.router, prefix="/api/v1")
+app.include_router(reservations.router, prefix="/api/v1")
 app.include_router(slots.router, prefix="/api/v1")
- 
+
+
 # ─── 헬스체크 ───
 @app.get("/")
 async def health_check():
@@ -47,5 +47,3 @@ async def health_check():
         },
         "message": "success"
     }
-from app.api.v1 import counselors, auth, slots
-

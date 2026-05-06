@@ -2,7 +2,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
-
 from app.db.session import get_db
 from app.api.v1.dependencies import get_current_user
 from app.core.permissions import require_role, Role
@@ -10,72 +9,55 @@ from app.core.permissions import require_role, Role
 router = APIRouter(prefix="/reservations", tags=["reservations"])
 
 
-# ─── Pydantic 스키마 ───
-
 class ReservationCreate(BaseModel):
     slot_id: str
 
 
-# ─── 예약 생성 (핵심 - 동시성 제어) ───
-@router.post("/", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_reservation(
     data: ReservationCreate,
     current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    # client만 예약 가능
-    require_role(current_user, [Role.CLIENT])
+    """내담자: 예약 생성 (SELECT FOR UPDATE로 동시성 제어)"""
+    require_role(current_user, [Role.CLIENT, Role.ADMIN])
 
-    # ─── 핵심: SELECT FOR UPDATE ───
-    # 슬롯 조회 + 잠금 (다른 요청은 이 트랜잭션이 끝날 때까지 대기)
-    result = await db.execute(
-        text("""
-            SELECT id, counselor_id, start_time, end_time, is_available
-            FROM time_slots
-            WHERE id = :slot_id
-            FOR UPDATE
-        """),
-        {"slot_id": data.slot_id}
-    )
-    slot = result.fetchone()
-
-    # 슬롯 존재 확인
-    if not slot:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="슬롯을 찾을 수 없습니다"
+    async with db.begin():
+        # SELECT FOR UPDATE - 동시 요청 시 중복 예약 원천 차단
+        result = await db.execute(
+            text("""
+                SELECT id, counselor_id, is_available
+                FROM time_slots
+                WHERE id = :slot_id
+                FOR UPDATE
+            """),
+            {"slot_id": data.slot_id}
         )
+        slot = result.fetchone()
 
-    # 이미 예약된 슬롯 확인
-    if not slot.is_available:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="이미 예약된 슬롯입니다"
+        if not slot:
+            raise HTTPException(status_code=404, detail="슬롯을 찾을 수 없습니다")
+
+        if not slot.is_available:
+            raise HTTPException(status_code=409, detail="이미 예약된 슬롯입니다")
+
+        if str(slot.counselor_id) == current_user["id"]:
+            raise HTTPException(status_code=400, detail="본인 슬롯은 예약할 수 없습니다")
+
+        res = await db.execute(
+            text("""
+                INSERT INTO reservations (slot_id, client_id, status)
+                VALUES (:slot_id, :client_id, 'confirmed')
+                RETURNING id, slot_id, client_id, status, created_at
+            """),
+            {"slot_id": data.slot_id, "client_id": current_user["id"]}
         )
+        reservation = res.fetchone()
 
-    # 본인 슬롯은 예약 불가
-    if str(slot.counselor_id) == current_user["id"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="본인의 슬롯은 예약할 수 없습니다"
+        await db.execute(
+            text("UPDATE time_slots SET is_available = FALSE WHERE id = :slot_id"),
+            {"slot_id": data.slot_id}
         )
-
-    # 슬롯 예약 불가 처리
-    await db.execute(
-        text("UPDATE time_slots SET is_available = false WHERE id = :slot_id"),
-        {"slot_id": data.slot_id}
-    )
-
-    # 예약 생성
-    result = await db.execute(
-        text("""
-            INSERT INTO reservations (slot_id, client_id)
-            VALUES (:slot_id, :client_id)
-            RETURNING id, slot_id, client_id, status, created_at
-        """),
-        {"slot_id": data.slot_id, "client_id": current_user["id"]}
-    )
-    reservation = result.fetchone()
 
     return {
         "data": {
@@ -83,135 +65,159 @@ async def create_reservation(
             "slot_id": str(reservation.slot_id),
             "client_id": str(reservation.client_id),
             "status": reservation.status,
-            "start_time": str(slot.start_time),
-            "end_time": str(slot.end_time),
-            "created_at": str(reservation.created_at),
+            "created_at": reservation.created_at.isoformat(),
         },
         "message": "예약이 완료되었습니다"
     }
 
 
-# ─── 내 예약 목록 조회 (고객) ───
 @router.get("/me")
 async def get_my_reservations(
     current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
+    """내담자: 내 예약 목록 조회"""
+    require_role(current_user, [Role.CLIENT, Role.ADMIN])
+
     result = await db.execute(
         text("""
             SELECT
-                r.id, r.status, r.created_at,
-                ts.start_time, ts.end_time,
-                u.name as counselor_name,
-                u.email as counselor_email
+                r.id,
+                r.slot_id,
+                r.client_id,
+                r.status,
+                r.created_at,
+                ts.start_time   AS slot_start_time,
+                ts.end_time     AS slot_end_time,
+                u.name          AS counselor_name,
+                j.id            AS journal_id,
+                rv.id           AS review_id
             FROM reservations r
-            JOIN time_slots ts ON ts.id = r.slot_id
-            JOIN users u ON u.id = ts.counselor_id
+            JOIN time_slots ts ON r.slot_id = ts.id
+            JOIN users u       ON ts.counselor_id = u.id
+            LEFT JOIN journals j  ON j.reservation_id = r.id
+            LEFT JOIN reviews  rv ON rv.reservation_id = r.id
             WHERE r.client_id = :client_id
             ORDER BY ts.start_time DESC
         """),
-        {"client_id": current_user["id"]}
+        {"client_id": current_user["id"]},
     )
-    reservations = result.fetchall()
+    rows = result.fetchall()
 
-    return {
-        "data": [
-            {
-                "id": str(r.id),
-                "status": r.status,
-                "start_time": str(r.start_time),
-                "end_time": str(r.end_time),
-                "counselor_name": r.counselor_name,
-                "counselor_email": r.counselor_email,
-                "created_at": str(r.created_at),
-            }
-            for r in reservations
-        ],
-        "message": "success",
-        "total": len(reservations)
-    }
+    items = []
+    for row in rows:
+        m = dict(row._mapping)
+        items.append({
+            "id": str(m["id"]),
+            "slot_id": str(m["slot_id"]),
+            "client_id": str(m["client_id"]),
+            "status": m["status"],
+            "created_at": m["created_at"].isoformat() if m["created_at"] else None,
+            "counselor_name": m["counselor_name"],
+            "journal_id": str(m["journal_id"]) if m["journal_id"] else None,
+            "review_id": str(m["review_id"]) if m["review_id"] else None,
+            "slot": {
+                "start_time": m["slot_start_time"].isoformat() if m["slot_start_time"] else None,
+                "end_time": m["slot_end_time"].isoformat() if m["slot_end_time"] else None,
+            },
+        })
+
+    return {"data": items, "message": "success", "total": len(items)}
 
 
-# ─── 예약 취소 ───
+@router.get("/counselor")
+async def get_counselor_reservations(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """상담사: 내 슬롯의 예약 목록 조회"""
+    require_role(current_user, [Role.COUNSELOR, Role.ADMIN])
+
+    result = await db.execute(
+        text("""
+            SELECT
+                r.id,
+                r.slot_id,
+                r.client_id,
+                r.status,
+                r.created_at,
+                ts.start_time   AS slot_start_time,
+                ts.end_time     AS slot_end_time,
+                u.name          AS client_name,
+                j.id            AS journal_id
+            FROM reservations r
+            JOIN time_slots ts ON r.slot_id = ts.id
+            JOIN users u       ON r.client_id = u.id
+            LEFT JOIN journals j ON j.reservation_id = r.id
+            WHERE ts.counselor_id = :counselor_id
+            ORDER BY ts.start_time DESC
+        """),
+        {"counselor_id": current_user["id"]},
+    )
+    rows = result.fetchall()
+
+    items = []
+    for row in rows:
+        m = dict(row._mapping)
+        items.append({
+            "id": str(m["id"]),
+            "slot_id": str(m["slot_id"]),
+            "client_id": str(m["client_id"]),
+            "status": m["status"],
+            "created_at": m["created_at"].isoformat() if m["created_at"] else None,
+            "client_name": m["client_name"],
+            "journal_id": str(m["journal_id"]) if m["journal_id"] else None,
+            "slot": {
+                "start_time": m["slot_start_time"].isoformat() if m["slot_start_time"] else None,
+                "end_time": m["slot_end_time"].isoformat() if m["slot_end_time"] else None,
+            },
+        })
+
+    return {"data": items, "message": "success", "total": len(items)}
+
+
 @router.patch("/{reservation_id}/cancel")
 async def cancel_reservation(
     reservation_id: str,
     current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    # 예약 조회
+    """내담자: 예약 취소"""
+    require_role(current_user, [Role.CLIENT, Role.ADMIN])
+
+    # 예약 조회 및 소유권 확인
     result = await db.execute(
         text("""
-            SELECT r.id, r.client_id, r.slot_id, r.status
+            SELECT r.id, r.client_id, r.status, ts.start_time
             FROM reservations r
+            JOIN time_slots ts ON r.slot_id = ts.id
             WHERE r.id = :reservation_id
-            FOR UPDATE
         """),
-        {"reservation_id": reservation_id}
+        {"reservation_id": reservation_id},
     )
     reservation = result.fetchone()
 
     if not reservation:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="예약을 찾을 수 없습니다")
 
-    if str(reservation.client_id) != current_user["id"]:
+    if str(reservation.client_id) != current_user["id"] and current_user["role"] != Role.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="본인 예약만 취소할 수 있습니다")
 
     if reservation.status == "cancelled":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="이미 취소된 예약입니다")
 
-    await db.execute(
-        text("UPDATE reservations SET status = 'cancelled' WHERE id = :id"),
-        {"id": reservation_id}
-    )
-    await db.execute(
-        text("UPDATE time_slots SET is_available = true WHERE id = :slot_id"),
-        {"slot_id": str(reservation.slot_id)}
-    )
+    # 트랜잭션: 예약 상태 취소 + 슬롯 가용성 복원
+    async with db.begin():
+        await db.execute(
+            text("UPDATE reservations SET status = 'cancelled' WHERE id = :id"),
+            {"id": reservation_id},
+        )
+        await db.execute(
+            text("""
+                UPDATE time_slots SET is_available = TRUE
+                WHERE id = (SELECT slot_id FROM reservations WHERE id = :id)
+            """),
+            {"id": reservation_id},
+        )
 
     return {"data": None, "message": "예약이 취소되었습니다"}
-
-
-# ─── 상담사의 예약 목록 조회 ───
-@router.get("/counselor/me")
-async def get_counselor_reservations(
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    require_role(current_user, [Role.COUNSELOR, Role.ADMIN])
-
-    result = await db.execute(
-        text("""
-            SELECT
-                r.id, r.status, r.created_at,
-                ts.start_time, ts.end_time,
-                u.name as client_name,
-                u.email as client_email,
-                u.phone as client_phone
-            FROM reservations r
-            JOIN time_slots ts ON ts.id = r.slot_id
-            JOIN users u ON u.id = r.client_id
-            WHERE ts.counselor_id = :counselor_id
-            ORDER BY ts.start_time DESC
-        """),
-        {"counselor_id": current_user["id"]}
-    )
-    reservations = result.fetchall()
-
-    return {
-        "data": [
-            {
-                "id": str(r.id),
-                "status": r.status,
-                "start_time": str(r.start_time),
-                "end_time": str(r.end_time),
-                "client_name": r.client_name,
-                "client_email": r.client_email,
-                "client_phone": r.client_phone,
-                "created_at": str(r.created_at),
-            }
-            for r in reservations
-        ],
-        "message": "success",
-        "total": len(reservations)
-    }
