@@ -6,6 +6,7 @@ from datetime import date
 
 from app.db.session import get_db
 from app.core.security import hash_password, verify_password, create_access_token
+from app.api.v1.dependencies import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -123,10 +124,28 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
         "message": "로그인 성공"
     }
 
-
-# ─── 내 정보 조회 ───
 @router.get("/me")
-async def get_me(db: AsyncSession = Depends(get_db)):
-    # dependencies.py의 get_current_user 사용 예시는 아래 주석 참고
-    # current_user: dict = Depends(get_current_user)
-    pass
+async def get_me(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        text("SELECT is_active FROM users WHERE id = :id"),
+        {"id": current_user["id"]}
+    )
+    user = result.fetchone()
+
+    # is_active가 false일 때만 403 반환
+    if user and not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="비활성화된 계정입니다"
+        )
+
+    return {
+        "data": {
+            **current_user,
+            "is_active": user.is_active if user else True,
+        },
+        "message": "success"
+    }
