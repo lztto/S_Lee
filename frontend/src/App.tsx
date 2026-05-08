@@ -33,7 +33,7 @@ const AdminRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>
 }
 
-// BrowserRouter 안에서 훅 실행하는 내부 컴포넌트
+// BrowserRouter 안에서 훅 실행하는 내부 컴포넌트.
 function AppInner() {
   useActiveCheck()
   return (
