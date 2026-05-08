@@ -27,12 +27,13 @@ app.add_middleware(
 
 # ─── 라우터 등록 ───
 # auth, journals 는 각 담당 팀원이 완성 후 추가
-from app.api.v1 import auth, counselors, reservations, slots
+from app.api.v1 import auth, counselors, reservations, slots, admin  # admin 추가
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(counselors.router, prefix="/api/v1")
 app.include_router(reservations.router, prefix="/api/v1")
 app.include_router(slots.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")  # admin 추가
 
 
 # ─── 헬스체크 ───

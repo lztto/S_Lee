@@ -24,14 +24,19 @@ api.interceptors.request.use(
 )
 
 // ─── 응답 인터셉터 ───
-// 토큰 만료 시 자동 로그아웃
+// 401: 토큰 만료 → 자동 로그아웃
+// 403 + 비활성화: 강제 로그아웃
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status
+    const detail = error.response?.data?.detail
+
+    if (status === 401) {
       useAuthStore.getState().logout()
       window.location.href = '/login'
     }
+
     return Promise.reject(error)
   }
 )

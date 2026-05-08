@@ -9,6 +9,7 @@ import CounselorDashboard from './pages/CounselorDashboard'
 import JournalPage from './pages/JournalPage'
 import AdminPage from './pages/AdminPage'
 import MyReservationsPage from './pages/MyReservationsPage'
+import { useActiveCheck } from './hooks/useActiveCheck'
 
 // ─── 인증이 필요한 라우터 ───
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
@@ -32,41 +33,49 @@ const AdminRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>
 }
 
+// BrowserRouter 안에서 훅 실행하는 내부 컴포넌트
+function AppInner() {
+  useActiveCheck()
+  return (
+    <Routes>
+      {/* 공개 라우터 */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+
+      {/* 메인 페이지 - 누구나 접근 가능 */}
+      <Route path="/" element={<MainPage />} />
+
+      {/* 로그인 필요 */}
+      <Route path="/reservation/:counselorId" element={
+        <PrivateRoute><ReservationPage /></PrivateRoute>
+      } />
+      <Route path="/my-reservations" element={
+        <PrivateRoute><MyReservationsPage /></PrivateRoute>
+      } />
+      <Route path="/journal/:reservationId" element={
+        <PrivateRoute><JournalPage /></PrivateRoute>
+      } />
+
+      {/* 상담사 전용 */}
+      <Route path="/dashboard" element={
+        <CounselorRoute><CounselorDashboard /></CounselorRoute>
+      } />
+
+      {/* 관리자 전용 */}
+      <Route path="/admin" element={
+        <AdminRoute><AdminPage /></AdminRoute>
+      } />
+
+      {/* 없는 페이지 → 메인으로 */}
+      <Route path="*" element={<Navigate to="/" />} />
+    </Routes>
+  )
+}
+
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        {/* 공개 라우터 */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-
-        {/* 메인 페이지 - 누구나 접근 가능 */}
-        <Route path="/" element={<MainPage />} />
-
-        {/* 로그인 필요 */}
-        <Route path="/reservation/:counselorId" element={
-          <PrivateRoute><ReservationPage /></PrivateRoute>
-        } />
-        <Route path="/my-reservations" element={
-          <PrivateRoute><MyReservationsPage /></PrivateRoute>
-        } />
-        <Route path="/journal/:reservationId" element={
-          <PrivateRoute><JournalPage /></PrivateRoute>
-        } />
-
-        {/* 상담사 전용 */}
-        <Route path="/dashboard" element={
-          <CounselorRoute><CounselorDashboard /></CounselorRoute>
-        } />
-
-        {/* 관리자 전용 */}
-        <Route path="/admin" element={
-          <AdminRoute><AdminPage /></AdminRoute>
-        } />
-
-        {/* 없는 페이지 → 메인으로 */}
-        <Route path="*" element={<Navigate to="/" />} />
-      </Routes>
+      <AppInner />
     </BrowserRouter>
   )
 }
