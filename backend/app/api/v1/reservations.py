@@ -22,42 +22,43 @@ async def create_reservation(
     """내담자: 예약 생성 (SELECT FOR UPDATE로 동시성 제어)"""
     require_role(current_user, [Role.CLIENT, Role.ADMIN])
 
-    async with db.begin():
-        # SELECT FOR UPDATE - 동시 요청 시 중복 예약 원천 차단
-        result = await db.execute(
-            text("""
-                SELECT id, counselor_id, is_available
-                FROM time_slots
-                WHERE id = :slot_id
-                FOR UPDATE
-            """),
-            {"slot_id": data.slot_id}
-        )
-        slot = result.fetchone()
+    # SELECT FOR UPDATE — get_db()가 이미 트랜잭션을 시작하므로 async with db.begin() 사용 안 함
+    result = await db.execute(
+        text("""
+            SELECT id, counselor_id, is_available
+            FROM time_slots
+            WHERE id = :slot_id
+            FOR UPDATE
+        """),
+        {"slot_id": data.slot_id}
+    )
+    slot = result.fetchone()
 
-        if not slot:
-            raise HTTPException(status_code=404, detail="슬롯을 찾을 수 없습니다")
+    if not slot:
+        raise HTTPException(status_code=404, detail="슬롯을 찾을 수 없습니다")
 
-        if not slot.is_available:
-            raise HTTPException(status_code=409, detail="이미 예약된 슬롯입니다")
+    if not slot.is_available:
+        raise HTTPException(status_code=409, detail="이미 예약된 슬롯입니다")
 
-        if str(slot.counselor_id) == current_user["id"]:
-            raise HTTPException(status_code=400, detail="본인 슬롯은 예약할 수 없습니다")
+    if str(slot.counselor_id) == current_user["id"]:
+        raise HTTPException(status_code=400, detail="본인 슬롯은 예약할 수 없습니다")
 
-        res = await db.execute(
-            text("""
-                INSERT INTO reservations (slot_id, client_id, status)
-                VALUES (:slot_id, :client_id, 'confirmed')
-                RETURNING id, slot_id, client_id, status, created_at
-            """),
-            {"slot_id": data.slot_id, "client_id": current_user["id"]}
-        )
-        reservation = res.fetchone()
+    res = await db.execute(
+        text("""
+            INSERT INTO reservations (slot_id, client_id, status)
+            VALUES (:slot_id, :client_id, 'confirmed')
+            RETURNING id, slot_id, client_id, status, created_at
+        """),
+        {"slot_id": data.slot_id, "client_id": current_user["id"]}
+    )
+    reservation = res.fetchone()
 
-        await db.execute(
-            text("UPDATE time_slots SET is_available = FALSE WHERE id = :slot_id"),
-            {"slot_id": data.slot_id}
-        )
+    await db.execute(
+        text("UPDATE time_slots SET is_available = FALSE WHERE id = :slot_id"),
+        {"slot_id": data.slot_id}
+    )
+
+    await db.commit()
 
     return {
         "data": {
@@ -185,12 +186,10 @@ async def cancel_reservation(
     """내담자: 예약 취소"""
     require_role(current_user, [Role.CLIENT, Role.ADMIN])
 
-    # 예약 조회 및 소유권 확인
     result = await db.execute(
         text("""
-            SELECT r.id, r.client_id, r.status, ts.start_time
+            SELECT r.id, r.client_id, r.status, r.slot_id
             FROM reservations r
-            JOIN time_slots ts ON r.slot_id = ts.id
             WHERE r.id = :reservation_id
         """),
         {"reservation_id": reservation_id},
@@ -206,18 +205,15 @@ async def cancel_reservation(
     if reservation.status == "cancelled":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="이미 취소된 예약입니다")
 
-    # 트랜잭션: 예약 상태 취소 + 슬롯 가용성 복원
-    async with db.begin():
-        await db.execute(
-            text("UPDATE reservations SET status = 'cancelled' WHERE id = :id"),
-            {"id": reservation_id},
-        )
-        await db.execute(
-            text("""
-                UPDATE time_slots SET is_available = TRUE
-                WHERE id = (SELECT slot_id FROM reservations WHERE id = :id)
-            """),
-            {"id": reservation_id},
-        )
+    await db.execute(
+        text("UPDATE reservations SET status = 'cancelled' WHERE id = :id"),
+        {"id": reservation_id},
+    )
+    await db.execute(
+        text("UPDATE time_slots SET is_available = TRUE WHERE id = :slot_id"),
+        {"slot_id": str(reservation.slot_id)},
+    )
+
+    await db.commit()
 
     return {"data": None, "message": "예약이 취소되었습니다"}
