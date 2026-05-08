@@ -78,8 +78,8 @@ const MainPage = () => {
           {user ? (
             <>
               <span className="text-sm px-2" style={{ color: '#9E8E84' }}>{user.name}님</span>
-              
-              {/* 상담사 전용 버튼 */}
+
+              {/* 상담사 전용 */}
               {user.role === 'counselor' && (
                 <button
                   onClick={() => navigate('/dashboard')}
@@ -88,7 +88,7 @@ const MainPage = () => {
                 >대시보드</button>
               )}
 
-              {/* 🔥 추가된 관리자 전용 버튼 🔥 */}
+              {/* 관리자 전용 */}
               {user.role === 'admin' && (
                 <button
                   onClick={() => navigate('/admin')}
@@ -97,11 +97,15 @@ const MainPage = () => {
                 >관리자 페이지</button>
               )}
 
-              <button
-                onClick={() => navigate('/my-reservations')}
-                className="px-4 py-1.5 rounded-full text-sm transition-all hover:bg-gray-50"
-                style={{ border: '1px solid #DDD5C8', color: '#6B5B4E', background: 'transparent' }}
-              >내 예약</button>
+              {/* 내담자만 내 예약 버튼 표시 */}
+              {user.role === 'client' && (
+                <button
+                  onClick={() => navigate('/my-reservations')}
+                  className="px-4 py-1.5 rounded-full text-sm transition-all hover:bg-gray-50"
+                  style={{ border: '1px solid #DDD5C8', color: '#6B5B4E', background: 'transparent' }}
+                >내 예약</button>
+              )}
+
               <button
                 onClick={handleLogout}
                 className="px-4 py-1.5 rounded-full text-sm transition-all hover:opacity-90"
@@ -207,12 +211,10 @@ const MainPage = () => {
                   onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 16px 48px rgba(44,36,32,0.10)')}
                   onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 2px 12px rgba(44,36,32,0.04)')}
                 >
-                  {/* 상단 액센트 라인 */}
                   <div
                     className="absolute top-0 left-0 right-0 h-0.5 scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left"
                     style={{ background: 'linear-gradient(90deg, #C4A882, #D4B892)' }}
                   />
-
                   <div className="flex items-start justify-between mb-5">
                     <div
                       className="w-11 h-11 rounded-xl flex items-center justify-center text-base font-semibold"
@@ -227,7 +229,6 @@ const MainPage = () => {
                       예약 가능
                     </span>
                   </div>
-
                   <p
                     className="mb-1 tracking-tight"
                     style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontWeight: 400, fontSize: '17px' }}
@@ -237,9 +238,7 @@ const MainPage = () => {
                   <p className="text-xs mb-5 font-light" style={{ color: '#C4A882' }}>
                     {counselor.email}
                   </p>
-
                   <div className="h-px mb-5" style={{ background: '#F5F0E8' }} />
-
                   <div className="flex items-center justify-between">
                     <span className="text-xs" style={{ color: '#C4A882' }}>심리 · 코칭</span>
                     <button
