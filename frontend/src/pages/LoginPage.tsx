@@ -1,10 +1,12 @@
 ﻿import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import api from '../services/api'
 
 const LoginPage = () => {
   const navigate = useNavigate()
+  const location = useLocation()
+  const from = (location.state as any)?.from ?? null
   const { setAuth } = useAuthStore()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -24,7 +26,8 @@ const LoginPage = () => {
 
       // 역할에 따라 다른 페이지로 이동
       if (user.role === 'counselor') navigate('/dashboard')
-      else navigate('/') // 관리자(admin)와 내담자(client)는 모두 메인 화면으로 이동
+      else if (from) navigate(from)   // 예약 페이지 등에서 온 경우 원래 페이지로 복귀
+      else navigate('/')              // 일반 로그인 → 메인으로
 
     } catch (err: any) {
       setError(err.response?.data?.detail || '로그인에 실패했습니다')
