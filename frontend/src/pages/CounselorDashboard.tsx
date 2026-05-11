@@ -1,21 +1,20 @@
 ﻿import { useEffect, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getMySlots, createBulkSlots, toggleSlot } from '@/services/slotService'
+import { getBlockedSlots, blockSlot, unblockSlot } from '@/services/slotService'
+import type { BlockedSlot } from '@/services/slotService'
 import { getSlotReservations } from '@/services/ReservationService'
 import { useAuthStore } from '@/store/auth'
-import type { Slot, Reservation } from '@/types'
+import type { Reservation } from '@/types'
 
 type DashTab = 'slots' | 'reservations'
-
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
 
-// 기본 시간대 라벨 (KST)
-const TIME_BLOCKS = [
-  { label: '10:00 — 12:00', startH: 10 },
-  { label: '14:00 — 16:00', startH: 14 },
-  { label: '16:00 — 18:00', startH: 16 },
-  { label: '18:00 — 20:00', startH: 18 },
-  { label: '20:00 — 22:00', startH: 20 },
+const TIME_BLOCKS: { label: string; startH: number; endH: number }[] = [
+  { label: '10:00 — 12:00', startH: 10, endH: 12 },
+  { label: '14:00 — 16:00', startH: 14, endH: 16 },
+  { label: '16:00 — 18:00', startH: 16, endH: 18 },
+  { label: '18:00 — 20:00', startH: 18, endH: 20 },
+  { label: '20:00 — 22:00', startH: 20, endH: 22 },
 ]
 
 function buildCalendar(year: number, month: number) {
@@ -27,13 +26,7 @@ function buildCalendar(year: number, month: number) {
   return cells
 }
 
-// UTC ISO → KST 시작 시간 (hour)
-function toKSTHour(isoString: string): number {
-  const d = new Date(isoString)
-  return (d.getUTCHours() + 9) % 24
-}
-
-function dateKey(year: number, month: number, day: number) {
+function toDateKey(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
@@ -42,9 +35,9 @@ export default function CounselorDashboard() {
   const { user } = useAuthStore()
   const [activeTab, setActiveTab] = useState<DashTab>('slots')
 
-  const [slots, setSlots] = useState<Slot[]>([])
+  const [blockedSlots, setBlockedSlots] = useState<BlockedSlot[]>([])
   const [slotsLoading, setSlotsLoading] = useState(true)
-  const [slotsError, setSlotsError] = useState<string | null>(null)
+  const [togglingKey, setTogglingKey] = useState<string | null>(null)
 
   const [reservations, setReservations] = useState<Reservation[]>([])
   const [reservationsLoading, setReservationsLoading] = useState(false)
@@ -55,21 +48,16 @@ export default function CounselorDashboard() {
   const [calMonth, setCalMonth] = useState(today.getMonth())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
 
-  const [bulkCreating, setBulkCreating] = useState(false)
-  const [bulkMsg, setBulkMsg] = useState<string | null>(null)
-  const [togglingId, setTogglingId] = useState<string | null>(null)
-
-  useEffect(() => { fetchSlots() }, [])
+  useEffect(() => { fetchBlocked() }, [])
   useEffect(() => {
     if (activeTab === 'reservations' && reservations.length === 0) fetchReservations()
   }, [activeTab])
 
-  const fetchSlots = async () => {
+  const fetchBlocked = async () => {
     try {
       setSlotsLoading(true)
-      setSlotsError(null)
-      setSlots(await getMySlots())
-    } catch { setSlotsError('슬롯 목록을 불러오지 못했습니다.') }
+      setBlockedSlots(await getBlockedSlots())
+    } catch { /* 조용히 처리 */ }
     finally { setSlotsLoading(false) }
   }
 
@@ -82,65 +70,56 @@ export default function CounselorDashboard() {
     finally { setReservationsLoading(false) }
   }
 
-  const handleBulkCreate = async () => {
-    try {
-      setBulkCreating(true)
-      setBulkMsg(null)
-      const result = await createBulkSlots(calYear, calMonth + 1)
-      setBulkMsg(`${result.created}개 슬롯 생성 완료 (${result.skipped}개 중복 스킵)`)
-      await fetchSlots()
-    } catch { setBulkMsg('슬롯 생성에 실패했습니다.') }
-    finally { setBulkCreating(false) }
-  }
+  // 차단 세트: "2026-05-11_10" 형태
+  const blockedSet = useMemo(() => {
+    const s = new Set<string>()
+    for (const b of blockedSlots) s.add(`${b.blocked_date}_${b.start_hour}`)
+    return s
+  }, [blockedSlots])
 
-  const handleToggle = async (slot: Slot) => {
+  // 차단된 날짜 세트 (달력 표시용)
+  const blockedDates = useMemo(() => {
+    const s = new Set<string>()
+    for (const b of blockedSlots) s.add(b.blocked_date)
+    return s
+  }, [blockedSlots])
+
+  const handleToggle = async (dateKey: string, startH: number) => {
+    const key = `${dateKey}_${startH}`
+    const isBlocked = blockedSet.has(key)
     try {
-      setTogglingId(slot.id)
-      await toggleSlot(slot.id, !slot.is_available)
-      setSlots(prev => prev.map(s => s.id === slot.id ? { ...s, is_available: !s.is_available } : s))
+      setTogglingKey(key)
+      if (isBlocked) {
+        await unblockSlot(dateKey, startH)
+        setBlockedSlots(prev => prev.filter(b => !(b.blocked_date === dateKey && b.start_hour === startH)))
+      } else {
+        await blockSlot(dateKey, startH)
+        setBlockedSlots(prev => [...prev, { id: key, blocked_date: dateKey, start_hour: startH }])
+      }
     } catch (e: any) {
-      alert(e?.response?.data?.detail ?? '슬롯 상태 변경에 실패했습니다.')
-    } finally { setTogglingId(null) }
-  }
-
-  // 슬롯을 날짜+시간으로 인덱싱
-  const slotIndex = useMemo(() => {
-    const map = new Map<string, Slot>() // key: "2026-05-11_10"
-    for (const slot of slots) {
-      const d = new Date(slot.start_time)
-      const yyyy = d.getUTCFullYear()
-      const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
-      const dd = String(d.getUTCDate() + (d.getUTCHours() + 9 >= 24 ? 1 : 0)).padStart(2, '0')
-      const kstH = toKSTHour(slot.start_time)
-      // KST 날짜 계산
-      const kstDate = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-      const key = `${kstDate.getUTCFullYear()}-${String(kstDate.getUTCMonth() + 1).padStart(2, '0')}-${String(kstDate.getUTCDate()).padStart(2, '0')}_${kstH}`
-      map.set(key, slot)
+      alert(e?.response?.data?.detail ?? '변경에 실패했습니다.')
+    } finally {
+      setTogglingKey(null)
     }
-    return map
-  }, [slots])
-
-  // 선택 날짜의 슬롯들
-  const selectedDaySlots = useMemo(() => {
-    if (!selectedDate) return []
-    return TIME_BLOCKS.map(block => ({
-      block,
-      slot: slotIndex.get(`${selectedDate}_${block.startH}`) ?? null,
-    }))
-  }, [selectedDate, slotIndex])
+  }
 
   const calCells = buildCalendar(calYear, calMonth)
-  const now = new Date()
 
-  // 달력에서 슬롯 있는 날짜
-  const datesWithSlots = useMemo(() => {
-    const set = new Set<string>()
-    for (const slot of slots) {
-      const kstDate = new Date(new Date(slot.start_time).getTime() + 9 * 60 * 60 * 1000)
-      set.add(`${kstDate.getUTCFullYear()}-${String(kstDate.getUTCMonth() + 1).padStart(2, '0')}-${String(kstDate.getUTCDate()).padStart(2, '0')}`)
-    }
-    return set
-  }, [slots])
+  const prevMonth = () => {
+    if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11) }
+    else setCalMonth(m => m - 1)
+    setSelectedDate(null)
+  }
+  const nextMonth = () => {
+    if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0) }
+    else setCalMonth(m => m + 1)
+    setSelectedDate(null)
+  }
+
+  const now = new Date()
+  const upcomingCount = reservations.filter(
+    r => r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') >= now
+  ).length
 
   const formatDateTime = (iso: string) => {
     const d = new Date(iso)
@@ -149,24 +128,12 @@ export default function CounselorDashboard() {
       time: d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
     }
   }
-  const getDuration = (start: string, end: string) =>
-    `${(new Date(end).getTime() - new Date(start).getTime()) / 60000}분`
-
-  const availableCount = slots.filter(s => s.is_available && new Date(s.start_time) >= now).length
-  const bookedCount = slots.filter(s => {
-    // reservations에서 confirmed인 것 (is_available=false이면서 예약된 것)
-    return !s.is_available && new Date(s.start_time) >= now
-  }).length
-  const upcomingCount = reservations.filter(
-    r => r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') >= now
-  ).length
+  const getDuration = (s: string, e: string) =>
+    `${(new Date(e).getTime() - new Date(s).getTime()) / 60000}분`
 
   return (
     <div className="min-h-screen" style={{ background: '#FAF8F5', fontFamily: "'DM Sans', sans-serif" }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&display=swap');
-        * { font-family: 'DM Sans', sans-serif; }
-      `}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&display=swap');* { font-family: 'DM Sans', sans-serif; }`}</style>
 
       {/* 헤더 */}
       <div style={{ background: 'rgba(250,248,245,0.92)', backdropFilter: 'blur(12px)', borderBottom: '1px solid #EDE8E0', height: '64px', padding: '0 32px', display: 'flex', alignItems: 'center', position: 'sticky', top: 0, zIndex: 10 }}>
@@ -182,21 +149,32 @@ export default function CounselorDashboard() {
         {/* 요약 카드 */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '32px' }}>
           {[
-            { label: '예약 가능 슬롯', value: availableCount, unit: '개' },
-            { label: '예약된 슬롯', value: bookedCount, unit: '개' },
-            { label: '예정된 상담', value: upcomingCount, unit: '건' },
+            { label: '차단된 시간대', value: blockedSlots.length, unit: '개', desc: '비활성화됨' },
+            { label: '예정된 상담', value: upcomingCount, unit: '건', desc: '확정 예약' },
+            { label: '기본 운영 시간', value: '10 — 22', unit: 'KST', desc: '점심 12~14 제외' },
           ].map(card => (
             <div key={card.label} className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '18px 22px' }}>
-              <p className="text-sm font-light" style={{ color: '#9E8E84', margin: '0 0 6px' }}>{card.label}</p>
-              <span style={{ fontFamily: "'Playfair Display', serif", fontSize: '30px', fontWeight: 400, color: '#2C2420' }}>{card.value}</span>
-              <span className="text-sm font-light" style={{ color: '#9E8E84', marginLeft: '4px' }}>{card.unit}</span>
+              <p className="text-sm font-light" style={{ color: '#9E8E84', margin: '0 0 4px' }}>{card.label}</p>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginBottom: '2px' }}>
+                <span style={{ fontFamily: "'Playfair Display', serif", fontSize: '26px', fontWeight: 400, color: '#2C2420' }}>{card.value}</span>
+                <span className="text-sm font-light" style={{ color: '#9E8E84' }}>{card.unit}</span>
+              </div>
+              <p style={{ fontSize: '11px', color: '#C4A882', margin: 0 }}>{card.desc}</p>
             </div>
           ))}
         </div>
 
+        {/* 안내 배너 */}
+        <div className="rounded-xl" style={{ background: '#F5F0E8', padding: '12px 18px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '16px' }}>💡</span>
+          <p style={{ fontSize: '13px', color: '#6B5B4E', margin: 0 }}>
+            기본적으로 <strong>모든 시간대가 예약 가능</strong>합니다. 상담이 불가한 날짜/시간만 선택해서 차단하세요.
+          </p>
+        </div>
+
         {/* 탭 */}
         <div style={{ display: 'flex', borderBottom: '1px solid #EDE8E0', marginBottom: '24px' }}>
-          {([['slots', '슬롯 관리'], ['reservations', '예약 확인']] as const).map(([key, label]) => (
+          {([['slots', '휴무 관리'], ['reservations', '예약 확인']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setActiveTab(key)}
               style={{ padding: '10px 24px', border: 'none', borderBottom: activeTab === key ? '2px solid #2C2420' : '2px solid transparent', background: 'transparent', color: activeTab === key ? '#2C2420' : '#9E8E84', fontWeight: activeTab === key ? 500 : 400, fontSize: '14px', cursor: 'pointer', transition: 'all 0.2s' }}>
               {label}
@@ -204,64 +182,56 @@ export default function CounselorDashboard() {
           ))}
         </div>
 
-        {/* ── 슬롯 관리 탭 ── */}
+        {/* ── 휴무 관리 탭 ── */}
         {activeTab === 'slots' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: '24px', alignItems: 'start' }}>
 
             {/* 왼쪽: 달력 */}
             <div>
-              {/* 달력 헤더 + 일괄 생성 */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: '15px', fontWeight: 400, color: '#2C2420', margin: 0 }}>날짜 선택</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <button onClick={() => { if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11) } else setCalMonth(m => m - 1); setSelectedDate(null) }}
+                  <button onClick={prevMonth}
                     disabled={calYear === today.getFullYear() && calMonth <= today.getMonth()}
                     style={{ background: 'none', border: '1px solid #EDE8E0', borderRadius: '8px', width: '28px', height: '28px', cursor: 'pointer', color: '#9E8E84', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: (calYear === today.getFullYear() && calMonth <= today.getMonth()) ? 0.3 : 1 }}>‹</button>
-                  <span style={{ fontSize: '15px', fontWeight: 500, color: '#2C2420', minWidth: '90px', textAlign: 'center' }}>{calYear}년 {calMonth + 1}월</span>
-                  <button onClick={() => { if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0) } else setCalMonth(m => m + 1); setSelectedDate(null) }}
+                  <span style={{ fontSize: '14px', fontWeight: 500, color: '#2C2420', minWidth: '80px', textAlign: 'center' }}>{calYear}년 {calMonth + 1}월</span>
+                  <button onClick={nextMonth}
                     style={{ background: 'none', border: '1px solid #EDE8E0', borderRadius: '8px', width: '28px', height: '28px', cursor: 'pointer', color: '#9E8E84', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
                 </div>
-                <button onClick={handleBulkCreate} disabled={bulkCreating}
-                  className="px-4 py-2 rounded-full text-sm font-medium"
-                  style={{ background: bulkCreating ? '#C4A882' : '#2C2420', color: '#FAF8F5', border: 'none', cursor: bulkCreating ? 'not-allowed' : 'pointer', transition: 'background 0.2s' }}>
-                  {bulkCreating ? '생성 중...' : `${calMonth + 1}월 슬롯 일괄 생성`}
-                </button>
               </div>
 
-              {bulkMsg && (
-                <p className="text-sm" style={{ color: bulkMsg.includes('실패') ? '#C0392B' : '#5A8A6A', marginBottom: '12px' }}>{bulkMsg}</p>
-              )}
-
-              {/* 달력 그리드 */}
               <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '20px' }}>
+                {/* 요일 헤더 */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: '8px' }}>
                   {WEEKDAYS.map(w => (
                     <div key={w} style={{ textAlign: 'center', fontSize: '11px', color: '#9E8E84', padding: '4px 0', fontWeight: 500 }}>{w}</div>
                   ))}
                 </div>
+                {/* 날짜 셀 */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
                   {calCells.map((day, idx) => {
                     if (!day) return <div key={idx} />
-                    const dk = dateKey(calYear, calMonth, day)
-                    const hasSlots = datesWithSlots.has(dk)
+                    const dk = toDateKey(calYear, calMonth, day)
                     const isSelected = selectedDate === dk
                     const isPast = new Date(dk) < new Date(today.toDateString())
                     const isToday = dk === today.toISOString().slice(0, 10)
+                    const hasBlock = blockedDates.has(dk)
                     return (
                       <div key={idx}
                         onClick={() => { if (!isPast) setSelectedDate(isSelected ? null : dk) }}
                         style={{
                           textAlign: 'center', padding: '8px 4px', borderRadius: '8px',
                           fontSize: '13px', cursor: isPast ? 'default' : 'pointer',
-                          background: isSelected ? '#2C2420' : isPast ? 'transparent' : hasSlots ? '#F5F0E8' : 'transparent',
+                          background: isSelected ? '#2C2420' : 'transparent',
                           color: isSelected ? '#FAF8F5' : isPast ? '#DDD5C8' : '#2C2420',
                           fontWeight: isToday ? 600 : 400, transition: 'all 0.15s',
                         }}
-                        onMouseEnter={(e) => { if (!isPast && !isSelected) (e.currentTarget as HTMLDivElement).style.background = '#EDE8E0' }}
-                        onMouseLeave={(e) => { if (!isPast && !isSelected) (e.currentTarget as HTMLDivElement).style.background = hasSlots ? '#F5F0E8' : 'transparent' }}
+                        onMouseEnter={(e) => { if (!isPast && !isSelected) (e.currentTarget as HTMLDivElement).style.background = '#F5F0E8' }}
+                        onMouseLeave={(e) => { if (!isPast && !isSelected) (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
                       >
                         {day}
-                        {hasSlots && !isSelected && (
-                          <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#C4A882', margin: '2px auto 0' }} />
+                        {hasBlock && !isSelected && (
+                          <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#C0392B', margin: '2px auto 0' }} />
                         )}
                       </div>
                     )
@@ -269,68 +239,79 @@ export default function CounselorDashboard() {
                 </div>
               </div>
 
-              <p className="text-xs font-light" style={{ color: '#9E8E84', marginTop: '10px' }}>
-                ● 슬롯 있는 날짜 · 날짜를 클릭하면 오른쪽에서 시간대별 활성/비활성을 설정할 수 있습니다
-              </p>
+              {/* 범례 */}
+              <div style={{ display: 'flex', gap: '16px', marginTop: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#C0392B' }} />
+                  <span style={{ fontSize: '11px', color: '#9E8E84' }}>차단된 날짜</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#5A8A6A' }} />
+                  <span style={{ fontSize: '11px', color: '#9E8E84' }}>예약 가능 (기본)</span>
+                </div>
+              </div>
             </div>
 
-            {/* 오른쪽: 선택 날짜 슬롯 토글 */}
+            {/* 오른쪽: 시간대 토글 */}
             <div style={{ position: 'sticky', top: '80px' }}>
               <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: '15px', fontWeight: 400, color: '#2C2420', marginBottom: '14px' }}>
                 {selectedDate
-                  ? new Date(selectedDate + 'T00:00:00').toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })
+                  ? new Date(selectedDate + 'T12:00:00').toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })
                   : '날짜를 선택하세요'}
               </h3>
 
               {!selectedDate ? (
                 <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '32px 20px', textAlign: 'center', color: '#9E8E84' }}>
-                  <p className="text-sm font-light">달력에서 날짜를 클릭하면<br />시간대를 관리할 수 있습니다</p>
+                  <p style={{ fontSize: '13px', marginBottom: '4px' }}>달력에서 날짜를 클릭하면</p>
+                  <p style={{ fontSize: '13px' }}>시간대를 관리할 수 있습니다</p>
                 </div>
               ) : slotsLoading ? (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: '#9E8E84' }}>불러오는 중...</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {/* 점심시간 안내 */}
-                  <div className="rounded-xl" style={{ background: '#F5F0E8', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '12px', color: '#C4A882' }}>🍽</span>
-                    <span style={{ fontSize: '12px', color: '#9E8E84' }}>12:00 — 14:00 점심시간 (고정 휴무)</span>
+                  {/* 점심시간 */}
+                  <div className="rounded-xl" style={{ background: '#FAF8F5', border: '1px solid #EDE8E0', padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <p style={{ fontSize: '13px', color: '#9E8E84', margin: 0 }}>12:00 — 14:00</p>
+                      <p style={{ fontSize: '11px', color: '#C4A882', margin: '2px 0 0' }}>점심시간 (고정 휴무)</p>
+                    </div>
+                    <span style={{ fontSize: '11px', color: '#DDD5C8', fontWeight: 500 }}>휴무</span>
                   </div>
 
-                  {selectedDaySlots.map(({ block, slot }) => {
-                    const isToggling = togglingId === slot?.id
-                    const isActive = slot?.is_available ?? false
-                    const hasSlot = !!slot
-                    const isPast = slot ? new Date(slot.start_time) < now : false
+                  {TIME_BLOCKS.map(block => {
+                    const key = `${selectedDate}_${block.startH}`
+                    const isBlocked = blockedSet.has(key)
+                    const isToggling = togglingKey === key
 
                     return (
                       <div key={block.startH} className="rounded-xl"
-                        style={{ background: '#fff', border: `1px solid ${hasSlot && isActive ? '#C4A882' : '#EDE8E0'}`, padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', opacity: isPast ? 0.5 : 1 }}>
+                        style={{
+                          background: '#fff',
+                          border: `1px solid ${isBlocked ? '#FCD5D5' : '#C4A882'}`,
+                          padding: '12px 14px',
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          transition: 'all 0.2s',
+                        }}>
                         <div>
-                          <p style={{ fontSize: '14px', fontWeight: 500, color: '#2C2420', margin: 0 }}>{block.label}</p>
-                          {!hasSlot && (
-                            <p style={{ fontSize: '11px', color: '#9E8E84', margin: '2px 0 0' }}>슬롯 없음 (일괄 생성 필요)</p>
-                          )}
+                          <p style={{ fontSize: '13px', fontWeight: 500, color: isBlocked ? '#9E8E84' : '#2C2420', margin: 0 }}>{block.label}</p>
+                          <p style={{ fontSize: '11px', color: isBlocked ? '#C0392B' : '#5A8A6A', margin: '2px 0 0' }}>
+                            {isBlocked ? '차단됨 (예약 불가)' : '예약 가능'}
+                          </p>
                         </div>
-
-                        {hasSlot && !isPast ? (
-                          <button
-                            onClick={() => handleToggle(slot!)}
-                            disabled={isToggling}
-                            style={{
-                              padding: '5px 14px', borderRadius: '100px', border: 'none',
-                              background: isActive ? '#2C2420' : '#F5F0E8',
-                              color: isActive ? '#FAF8F5' : '#9E8E84',
-                              fontSize: '12px', fontWeight: 500, cursor: isToggling ? 'not-allowed' : 'pointer',
-                              transition: 'all 0.2s', minWidth: '60px',
-                            }}
-                          >
-                            {isToggling ? '...' : isActive ? '활성' : '비활성'}
-                          </button>
-                        ) : isPast ? (
-                          <span style={{ fontSize: '11px', color: '#DDD5C8' }}>종료</span>
-                        ) : (
-                          <span style={{ fontSize: '11px', color: '#DDD5C8' }}>—</span>
-                        )}
+                        <button
+                          onClick={() => handleToggle(selectedDate, block.startH)}
+                          disabled={isToggling}
+                          style={{
+                            padding: '5px 14px', borderRadius: '100px', border: 'none',
+                            background: isBlocked ? '#FFF0EE' : '#2C2420',
+                            color: isBlocked ? '#C0392B' : '#FAF8F5',
+                            fontSize: '12px', fontWeight: 500,
+                            cursor: isToggling ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.2s', minWidth: '60px',
+                          }}
+                        >
+                          {isToggling ? '...' : isBlocked ? '차단 해제' : '차단'}
+                        </button>
                       </div>
                     )
                   })}
@@ -353,7 +334,7 @@ export default function CounselorDashboard() {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                {reservations.map((reservation) => {
+                {reservations.map(reservation => {
                   const startDt = reservation.slot ? formatDateTime(reservation.slot.start_time) : null
                   const duration = reservation.slot ? getDuration(reservation.slot.start_time, reservation.slot.end_time) : null
                   const isUpcoming = reservation.status === 'confirmed' && new Date(reservation.slot?.start_time ?? '') >= now
@@ -361,8 +342,7 @@ export default function CounselorDashboard() {
                     <div key={reservation.id} className="rounded-2xl"
                       style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '22px 26px', transition: 'all 0.2s' }}
                       onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-3px)'; (e.currentTarget as HTMLDivElement).style.boxShadow = '0 8px 24px rgba(44,36,32,0.08)' }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)'; (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
-                    >
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)'; (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div style={{ flex: 1 }}>
                           <span style={{ display: 'inline-block', background: reservation.status === 'cancelled' ? '#FFF0EE' : isUpcoming ? '#F5F0E8' : '#F0F5EE', color: reservation.status === 'cancelled' ? '#C0392B' : isUpcoming ? '#C4A882' : '#5A8A6A', borderRadius: '100px', padding: '3px 12px', fontSize: '11px', fontWeight: 500, marginBottom: '10px' }}>

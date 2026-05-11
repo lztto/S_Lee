@@ -55,6 +55,17 @@ CREATE TABLE IF NOT EXISTS reviews (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS blocked_slots (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    counselor_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_date  DATE NOT NULL,
+    start_hour    INTEGER NOT NULL CHECK (start_hour IN (10, 14, 16, 18, 20)),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (counselor_id, blocked_date, start_hour)
+);
+ 
+CREATE INDEX IF NOT EXISTS idx_blocked_slots_counselor_date
+    ON blocked_slots(counselor_id, blocked_date);
 -- ─── 인덱스 ───
 CREATE INDEX IF NOT EXISTS idx_time_slots_counselor_id ON time_slots(counselor_id);
 CREATE INDEX IF NOT EXISTS idx_time_slots_start_time   ON time_slots(start_time);
