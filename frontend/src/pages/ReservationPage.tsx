@@ -15,6 +15,8 @@ interface SlotItem {
   start_time: string
   end_time: string
   is_available: boolean
+  reason?: 'time_passed' | 'blocked' | 'reserved' | null
+  is_virtual?: boolean
 }
 
 // 날짜별 그룹
@@ -27,14 +29,17 @@ interface DayGroup {
 function groupByDate(slots: SlotItem[]): DayGroup[] {
   const map = new Map<string, SlotItem[]>()
   for (const slot of slots) {
+    // 모든 슬롯 포함 (예약 불가 포함)
     const d = new Date(slot.start_time)
-    const key = d.toISOString().slice(0, 10)
+    // UTC → KST 날짜로 그룹핑
+    const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+    const key = kst.toISOString().slice(0, 10)
     if (!map.has(key)) map.set(key, [])
     map.get(key)!.push(slot)
   }
   return Array.from(map.entries()).map(([dateKey, slots]) => ({
     dateKey,
-    dateLabel: new Date(dateKey + 'T00:00:00').toLocaleDateString('ko-KR', {
+    dateLabel: new Date(dateKey + 'T12:00:00').toLocaleDateString('ko-KR', {
       month: 'long', day: 'numeric', weekday: 'short',
     }),
     slots: slots.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()),
@@ -109,11 +114,16 @@ export default function ReservationPage() {
     }
   }, [token, counselor])
 
-  const availableSlots = counselor?.available_slots ?? []
-  const dayGroups = groupByDate(availableSlots)
+  const allSlots = counselor?.available_slots ?? []
+  const dayGroups = groupByDate(allSlots)
 
   // 달력에서 슬롯 있는 날짜 집합
-  const availableDates = new Set(dayGroups.map(g => g.dateKey))
+  // 예약 가능한 슬롯이 하나라도 있는 날짜
+  const availableDates = new Set(
+    dayGroups.filter(g => g.slots.some(s => s.is_available)).map(g => g.dateKey)
+  )
+  // 슬롯이 있는 모든 날짜 (빗금 표시용)
+  const allDates = new Set(dayGroups.map(g => g.dateKey))
 
   // 선택된 날짜의 슬롯
   const slotsForDate = selectedDate
@@ -194,8 +204,14 @@ export default function ReservationPage() {
       ;(async () => {
         try {
           setPaying(true)
-          // 실제 예약 생성
-          await api.post('/reservations', { slot_id: slotId })
+          // 실제 예약 생성 — 가상 슬롯이면 counselor_id, start_time 함께 전송
+          const isVirtual = slotId.startsWith('virtual_')
+          await api.post('/reservations', {
+            slot_id: slotId,
+            ...(isVirtual && counselorId
+              ? { counselor_id: counselorId, start_time: selectedSlot?.start_time }
+              : {}),
+          })
           // URL 파라미터 제거
           navigate(`/reservation/${counselorId}`, { replace: true })
           setSuccess(true)
@@ -371,15 +387,18 @@ export default function ReservationPage() {
                   {calCells.map((day, idx) => {
                     if (!day) return <div key={idx} />
                     const dateKey = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-                    const hasSlot = availableDates.has(dateKey)
+                    const hasAvailable = availableDates.has(dateKey)
+                    const hasAny = allDates.has(dateKey)
                     const isSelected = selectedDate === dateKey
                     const isPast = new Date(dateKey) < new Date(today.toDateString())
                     const isToday = dateKey === today.toISOString().slice(0, 10)
+                    // 클릭 가능: 슬롯이 하나라도 있는 날짜 (예약 불가 포함, 과거 제외)
+                    const isClickable = hasAny && !isPast
                     return (
                       <div
                         key={idx}
                         onClick={() => {
-                          if (!hasSlot || isPast) return
+                          if (!isClickable) return
                           setSelectedDate(isSelected ? null : dateKey)
                           setSelectedSlot(null)
                         }}
@@ -388,26 +407,27 @@ export default function ReservationPage() {
                           padding: '8px 4px',
                           borderRadius: '8px',
                           fontSize: '13px',
-                          cursor: hasSlot && !isPast ? 'pointer' : 'default',
-                          background: isSelected ? '#2C2420' : hasSlot && !isPast ? '#F5F0E8' : 'transparent',
-                          color: isSelected ? '#FAF8F5' : isPast ? '#DDD5C8' : hasSlot ? '#2C2420' : '#9E8E84',
+                          cursor: isClickable ? 'pointer' : 'default',
+                          background: isSelected ? '#2C2420' : isClickable ? '#F5F0E8' : 'transparent',
+                          color: isSelected ? '#FAF8F5' : isPast ? '#DDD5C8' : isClickable ? '#2C2420' : '#9E8E84',
                           fontWeight: isToday ? 600 : 400,
                           transition: 'all 0.15s',
                           position: 'relative',
                         }}
                         onMouseEnter={(e) => {
-                          if (hasSlot && !isPast && !isSelected)
+                          if (isClickable && !isSelected)
                             (e.currentTarget as HTMLDivElement).style.background = '#EDE8E0'
                         }}
                         onMouseLeave={(e) => {
-                          if (hasSlot && !isPast && !isSelected)
+                          if (isClickable && !isSelected)
                             (e.currentTarget as HTMLDivElement).style.background = '#F5F0E8'
-                          else if (!hasSlot || isPast)
+                          else if (!isClickable)
                             (e.currentTarget as HTMLDivElement).style.background = 'transparent'
                         }}
                       >
                         {day}
-                        {hasSlot && !isPast && !isSelected && (
+                        {/* 예약 가능 dot */}
+                        {hasAvailable && !isSelected && (
                           <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#C4A882', margin: '2px auto 0' }} />
                         )}
                       </div>
@@ -425,35 +445,75 @@ export default function ReservationPage() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {slotsForDate.map((slot) => {
                       const isSelected = selectedSlot?.id === slot.id
+                      const canSelect = slot.is_available
+                      const reasonLabel: Record<string, string> = {
+                        time_passed: '시간 초과',
+                        blocked: '상담 불가',
+                        reserved: '예약 완료',
+                      }
                       return (
                         <button
                           key={slot.id}
-                          onClick={() => setSelectedSlot(isSelected ? null : slot)}
+                          onClick={() => canSelect && setSelectedSlot(isSelected ? null : slot)}
                           style={{
-                            padding: '8px 16px',
+                            position: 'relative',
+                            padding: canSelect ? '8px 16px' : '6px 16px',
                             borderRadius: '100px',
-                            border: isSelected ? '1.5px solid #2C2420' : '1px solid #EDE8E0',
-                            background: isSelected ? '#2C2420' : '#fff',
-                            color: isSelected ? '#FAF8F5' : '#2C2420',
+                            border: isSelected
+                              ? '1.5px solid #2C2420'
+                              : canSelect
+                              ? '1px solid #EDE8E0'
+                              : '1px solid #E0E0E0',
+                            background: isSelected ? '#2C2420' : canSelect ? '#fff' : '#F5F5F5',
+                            color: isSelected ? '#FAF8F5' : canSelect ? '#2C2420' : '#BDBDBD',
                             fontSize: '13px',
-                            cursor: 'pointer',
+                            cursor: canSelect ? 'pointer' : 'not-allowed',
                             transition: 'all 0.2s',
                             whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            minWidth: '130px',
+                            textAlign: 'center',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '1px',
                           }}
                           onMouseEnter={(e) => {
-                            if (!isSelected) {
+                            if (canSelect && !isSelected) {
                               (e.currentTarget as HTMLButtonElement).style.borderColor = '#C4A882'
                               ;(e.currentTarget as HTMLButtonElement).style.color = '#C4A882'
                             }
                           }}
                           onMouseLeave={(e) => {
-                            if (!isSelected) {
+                            if (canSelect && !isSelected) {
                               (e.currentTarget as HTMLButtonElement).style.borderColor = '#EDE8E0'
                               ;(e.currentTarget as HTMLButtonElement).style.color = '#2C2420'
                             }
                           }}
                         >
-                          {formatTime(slot.start_time)} — {formatTime(slot.end_time)}
+                          {/* 빗금 오버레이 — 예약 불가 슬롯 */}
+                          {!canSelect && (
+                            <svg
+                              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: '100px' }}
+                              xmlns="http://www.w3.org/2000/svg"
+                              preserveAspectRatio="none"
+                            >
+                              <defs>
+                                <pattern id={`h-${slot.id.slice(-6)}`} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                                  <line x1="0" y1="0" x2="0" y2="8" stroke="#D0D0D0" strokeWidth="1.2" />
+                                </pattern>
+                              </defs>
+                              <rect width="100%" height="100%" fill={`url(#h-${slot.id.slice(-6)})`} />
+                            </svg>
+                          )}
+                          <span style={{ position: 'relative', zIndex: 1, fontSize: '13px' }}>
+                            {formatTime(slot.start_time)} — {formatTime(slot.end_time)}
+                          </span>
+                          {!canSelect && slot.reason && (
+                            <span style={{ position: 'relative', zIndex: 1, fontSize: '10px', color: '#BDBDBD' }}>
+                              {reasonLabel[slot.reason] ?? '예약 불가'}
+                            </span>
+                          )}
                         </button>
                       )
                     })}
@@ -468,7 +528,7 @@ export default function ReservationPage() {
                 </div>
               )}
 
-              {!selectedDate && availableDates.size > 0 && (
+              {!selectedDate && allSlots.length > 0 && (
                 <p className="text-sm font-light" style={{ color: '#9E8E84', marginTop: '8px' }}>
                   📅 달력에서 날짜를 선택해주세요
                 </p>
