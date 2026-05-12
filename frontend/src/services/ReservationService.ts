@@ -17,3 +17,9 @@ export const getSlotReservations = async (): Promise<Reservation[]> => {
   const res = await api.get<ApiResponse<Reservation[]>>('/reservations/counselor')
   return res.data.data
 }
+
+// 상담사: 리뷰
+export async function getReviewsByCounselor(counselorId: string) {
+  const res = await api.get(`/reviews/counselor/${counselorId}`)
+  return res.data
+}
