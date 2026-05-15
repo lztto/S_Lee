@@ -18,7 +18,7 @@ const LoginPage = () => {
     setError('')
     setLoading(true)
 
-    try {
+     try {
       const res = await api.post('/auth/login', { email, password })
       const { access_token, user } = res.data.data
 

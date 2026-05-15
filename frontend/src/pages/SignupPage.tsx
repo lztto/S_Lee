@@ -39,7 +39,6 @@ const SignupPage = () => {
         email: form.email,
         password: form.password,
         name: form.name,
-        role: 'client',
         phone: form.phone || null,
         birth_date: form.birth_date || null,
         gender: form.gender || null,
@@ -242,12 +241,6 @@ const SignupPage = () => {
           <p className="text-center text-sm" style={{ color: '#9E8E84' }}>
             이미 계정이 있으신가요?{' '}
             <Link to="/login" className="font-medium" style={{ color: '#2C2420' }}>로그인</Link>
-          </p>
-
-          {/* 상담사 신청 링크 */}
-          <p className="text-center text-xs mt-4" style={{ color: '#C4A882' }}>
-            상담사로 활동하고 싶으신가요?{' '}
-            <Link to="/signup/counselor" className="underline" style={{ color: '#C4A882' }}>상담사 신청</Link>
           </p>
         </div>
       </div>

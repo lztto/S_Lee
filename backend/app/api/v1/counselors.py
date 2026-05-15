@@ -1,5 +1,4 @@
-﻿"""Counselor routes."""
-from fastapi import APIRouter, Depends, HTTPException
+﻿from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from datetime import datetime, timedelta, date, timezone
@@ -92,12 +91,12 @@ def build_slots(
     return result
 
 
-# ─── 상담사 목록 조회 (누구나) ───
+# ─── 상담사 목록 조회 (누구나 접근 가능) ───
 @router.get("/")
 async def get_counselors(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         text("""
-            SELECT id, name, email, created_at
+            SELECT id, name, email, created_at, profile_image
             FROM users
             WHERE role = 'counselor' AND is_active = true
             ORDER BY created_at DESC
@@ -106,8 +105,14 @@ async def get_counselors(db: AsyncSession = Depends(get_db)):
     counselors = result.fetchall()
     return {
         "data": [
-            {"id": str(r.id), "name": r.name, "email": r.email, "created_at": str(r.created_at)}
-            for r in counselors
+            {
+                "id": str(row.id),
+                "name": row.name,
+                "email": row.email,
+                "created_at": str(row.created_at),
+                "profile_image": row.profile_image,
+            }
+            for row in counselors
         ],
         "message": "success",
         "total": len(counselors),
@@ -120,7 +125,7 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
     # 상담사 정보
     result = await db.execute(
         text("""
-            SELECT id, name, email, created_at
+            SELECT id, name, email, created_at, profile_image
             FROM users
             WHERE id = :id AND role = 'counselor' AND is_active = true
         """),
@@ -172,6 +177,7 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
             "name": counselor.name,
             "email": counselor.email,
             "created_at": str(counselor.created_at),
+            "profile_image": counselor.profile_image,
             "available_slots": all_slots,
         },
         "message": "success",
