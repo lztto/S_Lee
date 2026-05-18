@@ -7,6 +7,7 @@ interface CounselorDetail {
   id: string
   name: string
   email: string
+  profile_image: string | null
   available_slots: SlotItem[]
 }
 
@@ -349,9 +350,19 @@ export default function ReservationPage() {
 
           {/* 상담사 프로필 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '12px' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: '#F5F0E8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Playfair Display', serif", fontSize: '22px', color: '#C4A882', flexShrink: 0 }}>
-              {counselor.name.charAt(0)}
+            {counselor.profile_image ? (
+          <div style={{ width: '56px', height: '56px', borderRadius: '16px', overflow: 'hidden', flexShrink: 0, border: '2px solid #F5F0E8' }}>
+            <img 
+                src={counselor.profile_image} 
+                alt={counselor.name}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }} 
+               />
             </div>
+                 ) : (
+            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: '#F5F0E8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Playfair Display', serif", fontSize: '22px', color: '#C4A882', flexShrink: 0 }}>
+               {counselor.name.charAt(0)}
+            </div>
+                )}
             <div>
               <p className="text-xs font-medium tracking-widest uppercase" style={{ color: '#C4A882', marginBottom: '4px' }}>심리 · 코칭 상담</p>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: '22px', fontWeight: 400, color: '#2C2420', margin: 0 }}>
