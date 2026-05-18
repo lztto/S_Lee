@@ -46,9 +46,8 @@ function AppInner() {
       <Route path="/" element={<MainPage />} />
 
       {/* 로그인 필요 */}
-      <Route path="/reservation/:counselorId" element={
-        <PrivateRoute><ReservationPage /></PrivateRoute>
-      } />
+      <Route path="/reservation/:counselorId" element={<ReservationPage />} />
+      
       <Route path="/my-reservations" element={
         <PrivateRoute><MyReservationsPage /></PrivateRoute>
       } />
