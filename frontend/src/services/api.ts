@@ -24,15 +24,15 @@ api.interceptors.request.use(
 )
 
 // ─── 응답 인터셉터 ───
-// 401: 토큰 만료 → 자동 로그아웃
+// 401: 토큰 만료 → 자동 로그아웃 (단, /auth/me는 useActiveCheck에서 직접 처리)
 // 403 + 비활성화: 강제 로그아웃
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     const status = error.response?.status
-    const detail = error.response?.data?.detail
+    const url = error.config?.url ?? ''
 
-    if (status === 401) {
+    if (status === 401 && !url.includes('/auth/me')) {
       useAuthStore.getState().logout()
       window.location.href = '/login'
     }

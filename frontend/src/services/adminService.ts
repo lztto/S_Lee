@@ -28,3 +28,4 @@ export async function forceLogout(userId: string) {
   const res = await api.post(`/admin/users/${userId}/logout`)
   return res.data
 }
+
