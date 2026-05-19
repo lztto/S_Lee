@@ -39,7 +39,7 @@ async def create_reservation(
         if not data.counselor_id or not data.start_time:
             raise HTTPException(status_code=400, detail="가상 슬롯 예약 시 counselor_id와 start_time이 필요합니다")
 
-        start_dt = datetime.fromisoformat(data.start_time.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
+        start_dt = datetime.fromisoformat(data.start_time.replace("Z", "+00:00").replace(" ", "+")).astimezone(timezone.utc).replace(tzinfo=None)
         kst_hour = (start_dt + KST_OFFSET).hour
 
         if kst_hour not in VALID_HOURS:

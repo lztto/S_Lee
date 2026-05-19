@@ -1,4 +1,5 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+﻿"""Counselor routes."""
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from datetime import datetime, timedelta, date, timezone
@@ -55,11 +56,11 @@ def build_slots(
                 end_h, 0, tzinfo=timezone.utc
             ) - KST_OFFSET
 
-            # 불가 사유 판단
-            time_passed  = start_utc <= cutoff                          # 30분 이내 또는 지남
-            is_blocked   = (target_date, start_h) in blocked_set       # 상담사 차단
+            # 불가 사유 판단 — 우선순위: reserved > blocked > time_passed
             existing     = existing_slots.get((target_date, start_h))
-            is_reserved  = existing and not existing["is_available"]    # 예약 완료
+            is_reserved  = bool(existing and not existing["is_available"])  # 예약 완료
+            is_blocked   = (target_date, start_h) in blocked_set            # 상담사 차단
+            time_passed  = start_utc <= cutoff                              # 30분 이내 또는 지남
 
             unavailable = time_passed or is_blocked or is_reserved
 
@@ -69,13 +70,13 @@ def build_slots(
             else:
                 slot_id = f"virtual_{counselor_id}_{target_date}_{start_h}"
 
-            # 불가 사유 라벨 (프론트 표시용)
-            if time_passed:
-                reason = "time_passed"
+            # 불가 사유 라벨 — reserved를 가장 먼저 체크 (당일 예약된 슬롯이 time_passed로 오표시되던 문제 수정)
+            if is_reserved:
+                reason = "reserved"
             elif is_blocked:
                 reason = "blocked"
-            elif is_reserved:
-                reason = "reserved"
+            elif time_passed:
+                reason = "time_passed"
             else:
                 reason = None
 
@@ -91,12 +92,12 @@ def build_slots(
     return result
 
 
-# ─── 상담사 목록 조회 (누구나 접근 가능) ───
+# ─── 상담사 목록 조회 (누구나) ───
 @router.get("/")
 async def get_counselors(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         text("""
-            SELECT id, name, email, created_at, profile_image
+            SELECT id, name, email, created_at
             FROM users
             WHERE role = 'counselor' AND is_active = true
             ORDER BY created_at DESC
@@ -105,14 +106,8 @@ async def get_counselors(db: AsyncSession = Depends(get_db)):
     counselors = result.fetchall()
     return {
         "data": [
-            {
-                "id": str(row.id),
-                "name": row.name,
-                "email": row.email,
-                "created_at": str(row.created_at),
-                "profile_image": row.profile_image,
-            }
-            for row in counselors
+            {"id": str(r.id), "name": r.name, "email": r.email, "created_at": str(r.created_at)}
+            for r in counselors
         ],
         "message": "success",
         "total": len(counselors),
@@ -125,7 +120,7 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
     # 상담사 정보
     result = await db.execute(
         text("""
-            SELECT id, name, email, created_at, profile_image
+            SELECT id, name, email, created_at
             FROM users
             WHERE id = :id AND role = 'counselor' AND is_active = true
         """),
@@ -177,7 +172,6 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
             "name": counselor.name,
             "email": counselor.email,
             "created_at": str(counselor.created_at),
-            "profile_image": counselor.profile_image,
             "available_slots": all_slots,
         },
         "message": "success",
