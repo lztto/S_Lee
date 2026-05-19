@@ -9,6 +9,7 @@ import CounselorDashboard from './pages/CounselorDashboard'
 import JournalPage from './pages/JournalPage'
 import AdminPage from './pages/AdminPage'
 import MyReservationsPage from './pages/MyReservationsPage'
+import PaymentSuccessPage from './pages/Paymentsuccesspage'
 import { useActiveCheck } from './hooks/useActiveCheck'
 
 // ─── 인증이 필요한 라우터 ───
@@ -63,6 +64,11 @@ function AppInner() {
       {/* 관리자 전용 */}
       <Route path="/admin" element={
         <AdminRoute><AdminPage /></AdminRoute>
+      } />
+
+      {/* 결제 완료 페이지 */}
+      <Route path="/payment-success" element={
+        <PrivateRoute><PaymentSuccessPage /></PrivateRoute>
       } />
 
       {/* 없는 페이지 → 메인으로 */}

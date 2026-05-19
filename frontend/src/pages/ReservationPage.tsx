@@ -175,14 +175,17 @@ export default function ReservationPage() {
     try {
       setPaying(true)
       setError(null)
+
+      // 토스페이먼츠 SDK 동적 로드
       const tossPayments = await loadTossPayments()
-      const payment = tossPayments.payment({ customerKey: user?.id ?? 'guest' })
-      await payment.requestPayment({
-        method: 'CARD',
-        amount: { currency: 'KRW', value: 50000 },
-        orderId: `order-${Date.now()}`,
+
+      await tossPayments.requestPayment('카드', {
+        amount: 50000,
+        orderId: `res-${Date.now()}`,   // 토스 규칙: 영문+숫자+-_ 6~64자
         orderName: `${counselor?.name} 상담사 상담 예약`,
-        successUrl: `${window.location.origin}/reservation/${counselorId}?paymentKey=TOSS&orderId=order-${Date.now()}&amount=50000&slotId=${selectedSlot.id}&startTime=${encodeURIComponent(selectedSlot.start_time)}&isVirtual=${selectedSlot.id.startsWith('virtual_')}`,
+        customerName: user?.name ?? '고객',
+        // 토스가 successUrl에 paymentKey, orderId, amount를 자동으로 붙여줌
+        successUrl: `${window.location.origin}/reservation/${counselorId}?slotId=${selectedSlot.id}&startTime=${encodeURIComponent(selectedSlot.start_time)}&isVirtual=${selectedSlot.id.startsWith('virtual_')}`,
         failUrl: `${window.location.origin}/reservation/${counselorId}?paymentFailed=true`,
       })
     } catch (e: any) {
@@ -202,54 +205,76 @@ export default function ReservationPage() {
         return
       }
       const script = document.createElement('script')
-      script.src = 'https://js.tosspayments.com/v2/standard'
+      script.src = 'https://js.tosspayments.com/v1/payment'
       script.onload = () => {
-        try {
-          resolve((window as any).TossPayments(import.meta.env.VITE_TOSS_CLIENT_KEY))
-        } catch (e) {
-          reject(e)
-        }
+        resolve((window as any).TossPayments(import.meta.env.VITE_TOSS_CLIENT_KEY))
       }
-      script.onerror = () => reject(new Error('토스페이먼츠 SDK 로드 실패'))
+      script.onerror = reject
       document.head.appendChild(script)
     })
   }
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
-    const slotId = params.get('slotId')
-    const paymentKey = params.get('paymentKey')
 
-    if (slotId && paymentKey && token) {
-      ;(async () => {
-        try {
-          setPaying(true)
-          const isVirtualSlot = params.get('isVirtual') === 'true'
-          const startTimeParam = params.get('startTime')
-          const startTime = startTimeParam ? decodeURIComponent(startTimeParam) : null
-
-          await api.post('/reservations', {
-            slot_id: slotId,
-            ...(isVirtualSlot && counselorId && startTime
-              ? { counselor_id: counselorId, start_time: startTime }
-              : {}),
-          })
-          navigate(`/reservation/${counselorId}`, { replace: true })
-          setSuccess(true)
-        } catch (e: any) {
-          setError(e?.response?.data?.detail ?? '예약 처리에 실패했습니다.')
-          navigate(`/reservation/${counselorId}`, { replace: true })
-        } finally {
-          setPaying(false)
-        }
-      })()
-    }
-
+    // 결제 실패 처리
     if (params.get('paymentFailed') === 'true') {
-      setError('결제가 취소되었거나 실패했습니다. 다시 시도해주세요.')
+      setError('결제가 취소되었거나 실패했습니다.')
       navigate(`/reservation/${counselorId}`, { replace: true })
+      return
     }
-  }, [location.search, token])
+
+    // 토스가 successUrl에 자동으로 붙여주는 paymentKey 확인
+    const paymentKey = params.get('paymentKey')
+    const slotId = params.get('slotId')
+
+    // 결제 성공 파라미터 없으면 무시
+    if (!paymentKey || !slotId) return
+    // 토큰 없으면 무시 (로그인 필요)
+    if (!token) return
+    // counselor 아직 로드 중이면 대기 (counselor 로드 후 재실행됨)
+    if (!counselor) return
+
+    ;(async () => {
+      try {
+        setPaying(true)
+        setError(null)
+
+        const isVirtualSlot = params.get('isVirtual') === 'true'
+        const startTimeParam = params.get('startTime')
+        const startTime = startTimeParam ? decodeURIComponent(startTimeParam) : null
+
+        // 예약 생성 API 호출
+        const res = await api.post('/reservations', {
+          slot_id: slotId,
+          ...(isVirtualSlot && counselorId && startTime
+            ? { counselor_id: counselorId, start_time: startTime }
+            : {}),
+        })
+
+        const reservationId = res.data.data?.id ?? ''
+        const endTimeISO = startTime
+          ? new Date(new Date(startTime).getTime() + 2 * 60 * 60 * 1000).toISOString()
+          : ''
+
+        // 결제 완료 페이지로 이동
+        navigate(
+          `/payment-success` +
+          `?reservationId=${reservationId}` +
+          `&counselorName=${encodeURIComponent(counselor.name)}` +
+          `&startTime=${encodeURIComponent(startTime ?? '')}` +
+          `&endTime=${encodeURIComponent(endTimeISO)}` +
+          `&amount=50000`,
+          { replace: true }
+        )
+      } catch (e: any) {
+        setError(e?.response?.data?.detail ?? '예약 처리에 실패했습니다.')
+        navigate(`/reservation/${counselorId}`, { replace: true })
+      } finally {
+        setPaying(false)
+      }
+    })()
+  }, [location.search, token, counselor])  // counselor 로드 완료 후 실행 보장
 
   const calCells = buildCalendar(calYear, calMonth, availableDates)
 
