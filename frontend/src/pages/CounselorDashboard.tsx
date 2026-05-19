@@ -35,6 +35,7 @@ function toDateKey(year: number, month: number, day: number) {
 interface JournalItem {
   id: string
   reservation_id: string
+  title: string
   content: string
   is_private: boolean
   created_at: string
@@ -60,6 +61,7 @@ export default function CounselorDashboard() {
 
   // ── 일지 상태 ─────────────────────────────────────────────
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null)
+  const [journalTitle, setJournalTitle]               = useState('')
   const [journalContent, setJournalContent]           = useState('')
   const [journalPrivate, setJournalPrivate]           = useState(true)
   const [existingJournal, setExistingJournal]         = useState<JournalItem | null>(null)
@@ -67,12 +69,10 @@ export default function CounselorDashboard() {
   const [journalSaving, setJournalSaving]             = useState(false)
   const [journalMsg, setJournalMsg]                   = useState<string | null>(null)
 
-  useEffect(() => { fetchBlocked() }, [])
   useEffect(() => {
-    if ((activeTab === 'reservations' || activeTab === 'journal') && reservations.length === 0) {
-      fetchReservations()
-    }
-  }, [activeTab])
+    fetchBlocked()
+    fetchReservations()
+  }, [])
 
   // 예약 선택 시 기존 일지 조회
   useEffect(() => {
@@ -97,21 +97,26 @@ export default function CounselorDashboard() {
     finally { setReservationsLoading(false) }
   }
 
+  // ── 기존 일지 조회 (/journals/me 에서 필터링) ──
   const fetchJournal = async (reservationId: string) => {
     try {
       setJournalLoading(true)
       setExistingJournal(null)
+      setJournalTitle('')
       setJournalContent('')
       setJournalMsg(null)
-      const res = await api.get(`/journals/reservation/${reservationId}`)
-      const journal = res.data.data
-      if (journal) {
-        setExistingJournal(journal)
-        setJournalContent(journal.content)
-        setJournalPrivate(journal.is_private)
+      const res = await api.get('/journals/me')
+      const journals: JournalItem[] = res.data.data
+      const found = journals.find(j => j.reservation_id === reservationId) ?? null
+      if (found) {
+        setExistingJournal(found)
+        setJournalTitle(found.title ?? '')
+        setJournalContent(found.content)
+        setJournalPrivate(found.is_private)
       }
     } catch {
       setExistingJournal(null)
+      setJournalTitle('')
       setJournalContent('')
     } finally {
       setJournalLoading(false)
@@ -123,11 +128,16 @@ export default function CounselorDashboard() {
       setJournalMsg('내용을 입력해주세요.')
       return
     }
+    if (!journalTitle.trim()) {
+      setJournalMsg('제목을 입력해주세요.')
+      return
+    }
     try {
       setJournalSaving(true)
       setJournalMsg(null)
       if (existingJournal) {
-        await api.put(`/journals/${existingJournal.id}`, {
+        await api.patch(`/journals/${existingJournal.id}`, {
+          title: journalTitle,
           content: journalContent,
           is_private: journalPrivate,
         })
@@ -135,6 +145,7 @@ export default function CounselorDashboard() {
       } else {
         const res = await api.post('/journals', {
           reservation_id: selectedReservation.id,
+          title: journalTitle,
           content: journalContent,
           is_private: journalPrivate,
         })
@@ -142,7 +153,12 @@ export default function CounselorDashboard() {
         setJournalMsg('일지가 저장되었습니다.')
       }
     } catch (e: any) {
-      setJournalMsg(e?.response?.data?.detail ?? '저장에 실패했습니다.')
+      const detail = e?.response?.data?.detail
+      if (Array.isArray(detail)) {
+        setJournalMsg(detail.map((d: any) => d.msg).join(', '))
+      } else {
+        setJournalMsg(detail ?? '저장에 실패했습니다.')
+      }
     } finally {
       setJournalSaving(false)
     }
@@ -187,7 +203,6 @@ export default function CounselorDashboard() {
     r => r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') >= now
   ).length
 
-  // 일지 작성 가능한 완료된 예약
   const completedReservations = reservations.filter(
     r => r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') < now
   )
@@ -428,7 +443,6 @@ export default function CounselorDashboard() {
                             </div>
                           )}
                         </div>
-                        {/* 완료된 상담만 일지 버튼 표시 */}
                         {reservation.status === 'confirmed' && new Date(reservation.slot?.start_time ?? '') < now && (
                           <button
                             onClick={() => { setActiveTab('journal'); setSelectedReservation(reservation) }}
@@ -533,10 +547,31 @@ export default function CounselorDashboard() {
 
                   <div className="h-px" style={{ background: '#EDE8E0', marginBottom: '20px' }} />
 
+                  {/* 제목 입력 */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#9E8E84', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
+                      상담 핵심 주제 <span style={{ color: '#C0392B' }}>*</span>
+                    </label>
+                    <input
+                      value={journalTitle}
+                      onChange={(e) => setJournalTitle(e.target.value)}
+                      placeholder="예: 직장 내 스트레스로 인한 불안감 다루기"
+                      style={{
+                        width: '100%', padding: '12px 16px', borderRadius: '12px',
+                        border: '1px solid #EDE8E0', background: '#FAF8F5',
+                        fontSize: '14px', color: '#2C2420',
+                        fontFamily: "'DM Sans', sans-serif",
+                        outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
+                      }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = '#C4A882' }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = '#EDE8E0' }}
+                    />
+                  </div>
+
                   {/* 일지 내용 */}
                   <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: '12px', fontWeight: 500, color: '#9E8E84', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
-                      상담 내용
+                      상담 내용 <span style={{ color: '#C0392B' }}>*</span>
                     </label>
                     <textarea
                       value={journalContent}
@@ -571,7 +606,7 @@ export default function CounselorDashboard() {
 
                   {/* 메세지 */}
                   {journalMsg && (
-                    <p style={{ fontSize: '13px', marginBottom: '12px', color: journalMsg.includes('실패') || journalMsg.includes('입력') ? '#C0392B' : '#5A8A6A' }}>
+                    <p style={{ fontSize: '13px', marginBottom: '12px', color: journalMsg.includes('실패') || journalMsg.includes('입력') || journalMsg.includes('제목') ? '#C0392B' : '#5A8A6A' }}>
                       {journalMsg}
                     </p>
                   )}
@@ -601,4 +636,4 @@ export default function CounselorDashboard() {
       </div>
     </div>
   )
-}
+} 

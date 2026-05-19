@@ -2,9 +2,124 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getMyReservations, cancelReservation } from '@/services/ReservationService'
 import { useAuthStore } from '@/store/auth'
+import api from '@/services/api'
 import type { Reservation } from '@/types'
 
 type TabType = 'upcoming' | 'past' | 'cancelled'
+
+// ── 별점 컴포넌트 ──
+function StarRatingInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [hovered, setHovered] = useState(0)
+  return (
+    <div style={{ display: 'flex', gap: '4px' }}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <svg
+          key={star}
+          width="24" height="24" viewBox="0 0 16 16"
+          fill={(hovered || value) >= star ? '#C4A882' : '#EDE8E0'}
+          style={{ cursor: 'pointer', transition: 'fill 0.15s' }}
+          onMouseEnter={() => setHovered(star)}
+          onMouseLeave={() => setHovered(0)}
+          onClick={() => onChange(star)}
+        >
+          <path d="M8 1l1.9 3.8 4.2.6-3 2.9.7 4.2L8 10.4l-3.8 2 .7-4.2-3-2.9 4.2-.6z" />
+        </svg>
+      ))}
+    </div>
+  )
+}
+
+function StarRatingDisplay({ rating }: { rating: number }) {
+  return (
+    <div style={{ display: 'flex', gap: '2px' }}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <svg key={star} width="14" height="14" viewBox="0 0 16 16" fill={star <= rating ? '#C4A882' : '#EDE8E0'}>
+          <path d="M8 1l1.9 3.8 4.2.6-3 2.9.7 4.2L8 10.4l-3.8 2 .7-4.2-3-2.9 4.2-.6z" />
+        </svg>
+      ))}
+    </div>
+  )
+}
+
+// ── 인라인 리뷰 작성 폼 ──
+function ReviewForm({
+  reservationId,
+  onSuccess,
+}: {
+  reservationId: string
+  onSuccess: () => void
+}) {
+  const [rating, setRating] = useState(0)
+  const [content, setContent] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = async () => {
+    if (rating === 0) { setError('별점을 선택해주세요.'); return }
+    if (content.trim().length < 1) { setError('후기 내용을 입력해주세요.'); return }
+    try {
+      setSubmitting(true)
+      setError(null)
+      await api.post('/reviews', { reservation_id: reservationId, rating, content: content.trim() })
+      onSuccess()
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? '후기 작성에 실패했습니다.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div style={{ marginTop: '16px', padding: '20px', background: '#FAF8F5', borderRadius: '14px' }}>
+      <p style={{ fontSize: '13px', fontWeight: 500, color: '#2C2420', marginBottom: '12px' }}>
+        상담은 어떠셨나요?
+      </p>
+
+      {/* 별점 */}
+      <div style={{ marginBottom: '12px' }}>
+        <StarRatingInput value={rating} onChange={setRating} />
+      </div>
+
+      {/* 내용 */}
+      <textarea
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder="상담 후기를 자유롭게 작성해주세요 (최대 1000자)"
+        maxLength={1000}
+        rows={4}
+        style={{
+          width: '100%', padding: '12px 14px', borderRadius: '12px',
+          border: '1px solid #EDE8E0', background: '#fff',
+          fontSize: '13px', color: '#2C2420', lineHeight: 1.6,
+          resize: 'none', outline: 'none', boxSizing: 'border-box',
+          fontFamily: "'DM Sans', sans-serif",
+        }}
+      />
+      <p style={{ fontSize: '11px', color: '#9E8E84', textAlign: 'right', margin: '4px 0 12px' }}>
+        {content.length} / 1000
+      </p>
+
+      {error && (
+        <p style={{ fontSize: '12px', color: '#C0392B', marginBottom: '10px' }}>{error}</p>
+      )}
+
+      <button
+        onClick={handleSubmit}
+        disabled={submitting}
+        style={{
+          width: '100%', padding: '10px', borderRadius: '100px',
+          background: submitting ? '#C4A882' : '#2C2420', color: '#FAF8F5',
+          border: 'none', cursor: submitting ? 'not-allowed' : 'pointer',
+          fontSize: '13px', fontWeight: 500, transition: 'all 0.2s',
+        }}
+        onMouseEnter={(e) => { if (!submitting) (e.currentTarget.style.background = '#C4A882') }}
+        onMouseLeave={(e) => { if (!submitting) (e.currentTarget.style.background = '#2C2420') }}
+      >
+        {submitting ? '제출 중...' : '후기 제출'}
+      </button>
+    </div>
+  )
+}
 
 export default function MyReservationsPage() {
   const navigate = useNavigate()
@@ -14,6 +129,9 @@ export default function MyReservationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabType>('upcoming')
   const [cancellingId, setCancellingId] = useState<string | null>(null)
+
+  // ── 리뷰 폼 열린 예약 ID ──
+  const [reviewOpenId, setReviewOpenId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchReservations()
@@ -45,6 +163,14 @@ export default function MyReservationsPage() {
     } finally {
       setCancellingId(null)
     }
+  }
+
+  // ── 리뷰 작성 완료 → review_id 업데이트 ──
+  const handleReviewSuccess = (reservationId: string) => {
+    setReservations((prev) =>
+      prev.map((r) => r.id === reservationId ? { ...r, review_id: 'done' } : r)
+    )
+    setReviewOpenId(null)
   }
 
   const now = new Date()
@@ -91,28 +217,19 @@ export default function MyReservationsPage() {
 
       {/* 헤더 */}
       <div style={{ background: 'rgba(250,248,245,0.92)', backdropFilter: 'blur(12px)', borderBottom: '1px solid #EDE8E0', height: '64px', padding: '0 32px', display: 'flex', alignItems: 'center', position: 'sticky', top: 0, zIndex: 10, gap: '12px' }}>
-        {/* 로고 */}
         <div style={{ display: 'flex', flexDirection: 'column', cursor: 'pointer', marginRight: '8px' }} onClick={() => navigate('/')}>
           <span style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontSize: '16px', lineHeight: 1.2 }}>
             S<span style={{ color: '#C4A882' }}>.</span>LEE
           </span>
           <span style={{ fontSize: '8px', color: '#C4A882', letterSpacing: '0.15em', textTransform: 'uppercase' }}>Secret Counseling</span>
         </div>
-
-        {/* 구분선 */}
         <div style={{ width: '1px', height: '20px', background: '#EDE8E0' }} />
-
-        {/* 페이지 타이틀 */}
         <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: '16px', fontWeight: 400, color: '#2C2420', margin: 0 }}>
           내 예약
         </h1>
-
-        {/* 오른쪽 영역 */}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
           {user && (
-            <span className="text-sm font-light" style={{ color: '#9E8E84' }}>
-              {user.name}님
-            </span>
+            <span className="text-sm font-light" style={{ color: '#9E8E84' }}>{user.name}님</span>
           )}
           <button
             onClick={() => navigate('/')}
@@ -136,7 +253,7 @@ export default function MyReservationsPage() {
       </div>
 
       <div style={{ maxWidth: '800px', margin: '0 auto', padding: '40px 24px' }}>
-        {/* 상단 타이틀 + 새로고침 */}
+        {/* 상단 타이틀 */}
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: '32px' }}>
           <div>
             <p className="text-xs font-medium tracking-widest uppercase" style={{ color: '#C4A882', marginBottom: '6px' }}>
@@ -226,7 +343,9 @@ export default function MyReservationsPage() {
               const startDt = reservation.slot ? formatDateTime(reservation.slot.start_time) : null
               const duration = reservation.slot ? getDuration(reservation.slot.start_time, reservation.slot.end_time) : null
               const isUpcoming = reservation.status === 'confirmed' && new Date(reservation.slot?.start_time ?? '') >= now
+              const isPast = reservation.status === 'confirmed' && new Date(reservation.slot?.start_time ?? '') < now
               const isCancelling = cancellingId === reservation.id
+              const isReviewOpen = reviewOpenId === reservation.id
 
               return (
                 <div
@@ -280,26 +399,45 @@ export default function MyReservationsPage() {
                           {isCancelling ? '취소 중...' : '예약 취소'}
                         </button>
                       )}
-                      {reservation.status === 'confirmed' && new Date(reservation.slot?.start_time ?? '') < now && !reservation.review_id && (
-                        <a
-                          href={`/reservations/${reservation.id}/review`}
+
+                      {/* ── 리뷰 버튼 ── */}
+                      {isPast && !reservation.review_id && (
+                        <button
+                          onClick={() => setReviewOpenId(isReviewOpen ? null : reservation.id)}
                           className="px-4 py-2 rounded-full text-sm font-medium"
-                          style={{ background: '#2C2420', color: '#FAF8F5', textDecoration: 'none', display: 'inline-block', transition: 'all 0.2s' }}
-                          onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = '#C4A882' }}
-                          onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = '#2C2420' }}
+                          style={{
+                            background: isReviewOpen ? '#F5F0E8' : '#2C2420',
+                            color: isReviewOpen ? '#C4A882' : '#FAF8F5',
+                            border: 'none', cursor: 'pointer', transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => { if (!isReviewOpen) (e.currentTarget.style.background = '#C4A882') }}
+                          onMouseLeave={(e) => { (e.currentTarget.style.background = isReviewOpen ? '#F5F0E8' : '#2C2420') }}
                         >
-                          리뷰 작성
-                        </a>
+                          {isReviewOpen ? '닫기' : '후기 작성'}
+                        </button>
                       )}
+
+                      {/* ── 리뷰 작성 완료 ── */}
                       {reservation.review_id && (
-                        <span className="text-xs font-light" style={{ color: '#9E8E84' }}>리뷰 작성 완료</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <StarRatingDisplay rating={5} />
+                          <span className="text-xs font-light" style={{ color: '#9E8E84' }}>후기 완료</span>
+                        </div>
                       )}
                     </div>
                   </div>
 
+                  {/* ── 인라인 리뷰 폼 ── */}
+                  {isReviewOpen && !reservation.review_id && (
+                    <ReviewForm
+                      reservationId={reservation.id}
+                      onSuccess={() => handleReviewSuccess(reservation.id)}
+                    />
+                  )}
+
                   <div className="h-px" style={{ background: '#EDE8E0', margin: '16px 0 12px' }} />
 
-                  {/* 하단: 예약번호 + 다시 예약 버튼 */}
+                  {/* 하단: 예약번호 */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <p className="text-xs font-light" style={{ color: '#9E8E84', margin: 0 }}>
                       예약 번호 #{reservation.id.slice(0, 8).toUpperCase()}

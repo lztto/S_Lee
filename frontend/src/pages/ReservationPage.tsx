@@ -20,19 +20,25 @@ interface SlotItem {
   is_virtual?: boolean
 }
 
-// 날짜별 그룹
+// ── 리뷰 타입 추가 ──
+interface Review {
+  id: string
+  rating: number
+  content: string
+  client_name: string
+  created_at: string
+}
+
 interface DayGroup {
-  dateKey: string   // "2026-05-11"
-  dateLabel: string // "5월 11일 (월)"
+  dateKey: string
+  dateLabel: string
   slots: SlotItem[]
 }
 
 function groupByDate(slots: SlotItem[]): DayGroup[] {
   const map = new Map<string, SlotItem[]>()
   for (const slot of slots) {
-    // 모든 슬롯 포함 (예약 불가 포함)
     const d = new Date(slot.start_time)
-    // UTC → KST 날짜로 그룹핑
     const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
     const key = kst.toISOString().slice(0, 10)
     if (!map.has(key)) map.set(key, [])
@@ -47,7 +53,6 @@ function groupByDate(slots: SlotItem[]): DayGroup[] {
   }))
 }
 
-// 월별 달력 데이터 생성
 function buildCalendar(year: number, month: number, availableDates: Set<string>) {
   const firstDay = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -59,6 +64,19 @@ function buildCalendar(year: number, month: number, availableDates: Set<string>)
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
 
+// ── 별점 컴포넌트 ──
+function StarRating({ rating }: { rating: number }) {
+  return (
+    <div style={{ display: 'flex', gap: '2px' }}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <svg key={star} width="14" height="14" viewBox="0 0 16 16" fill={star <= rating ? '#C4A882' : '#EDE8E0'}>
+          <path d="M8 1l1.9 3.8 4.2.6-3 2.9.7 4.2L8 10.4l-3.8 2 .7-4.2-3-2.9 4.2-.6z" />
+        </svg>
+      ))}
+    </div>
+  )
+}
+
 export default function ReservationPage() {
   const { counselorId } = useParams<{ counselorId: string }>()
   const navigate = useNavigate()
@@ -69,17 +87,17 @@ export default function ReservationPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // 달력 상태
+  // ── 리뷰 상태 추가 ──
+  const [reviews, setReviews] = useState<Review[]>([])
+  const [avgRating, setAvgRating] = useState(0)
+  const [reviewsLoading, setReviewsLoading] = useState(true)
+
   const today = new Date()
   const [calYear, setCalYear] = useState(today.getFullYear())
   const [calMonth, setCalMonth] = useState(today.getMonth())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [selectedSlot, setSelectedSlot] = useState<SlotItem | null>(null)
-
-  // 로그인 유도 모달
   const [showLoginModal, setShowLoginModal] = useState(false)
-
-  // 결제/예약 상태
   const [paying, setPaying] = useState(false)
   const [success, setSuccess] = useState(false)
 
@@ -96,11 +114,25 @@ export default function ReservationPage() {
     }
   }, [counselorId])
 
+  // ── 리뷰 fetch ──
+  const fetchReviews = useCallback(async () => {
+    try {
+      setReviewsLoading(true)
+      const res = await api.get(`/reviews/counselor/${counselorId}`)
+      setReviews(res.data.data)
+      setAvgRating(res.data.avg_rating)
+    } catch {
+      // 리뷰 로딩 실패는 조용히 처리
+    } finally {
+      setReviewsLoading(false)
+    }
+  }, [counselorId])
+
   useEffect(() => {
     fetchData()
-  }, [fetchData])
+    fetchReviews()
+  }, [fetchData, fetchReviews])
 
-  // 로그인 후 돌아온 경우 — 선택했던 slot을 sessionStorage에서 복원
   useEffect(() => {
     if (token && counselor) {
       const saved = sessionStorage.getItem('pendingSlotId')
@@ -117,16 +149,10 @@ export default function ReservationPage() {
 
   const allSlots = counselor?.available_slots ?? []
   const dayGroups = groupByDate(allSlots)
-
-  // 달력에서 슬롯 있는 날짜 집합
-  // 예약 가능한 슬롯이 하나라도 있는 날짜
   const availableDates = new Set(
     dayGroups.filter(g => g.slots.some(s => s.is_available)).map(g => g.dateKey)
   )
-  // 슬롯이 있는 모든 날짜 (빗금 표시용)
   const allDates = new Set(dayGroups.map(g => g.dateKey))
-
-  // 선택된 날짜의 슬롯
   const slotsForDate = selectedDate
     ? (dayGroups.find(g => g.dateKey === selectedDate)?.slots ?? [])
     : []
@@ -139,24 +165,17 @@ export default function ReservationPage() {
     return `${diff}분`
   }
 
-  // 토스페이먼츠 결제 + 예약
   const handlePayAndReserve = async () => {
     if (!selectedSlot) return
-
-    // 로그인 안 된 경우 → 모달
     if (!token) {
       sessionStorage.setItem('pendingSlotId', selectedSlot.id)
       setShowLoginModal(true)
       return
     }
-
     try {
       setPaying(true)
       setError(null)
-
       const tossPayments = await loadTossPayments()
-
-      // v2 방식
       const payment = tossPayments.payment({ customerKey: user?.id ?? 'guest' })
       await payment.requestPayment({
         method: 'CARD',
@@ -167,7 +186,6 @@ export default function ReservationPage() {
         failUrl: `${window.location.origin}/reservation/${counselorId}?paymentFailed=true`,
       })
     } catch (e: any) {
-      // 사용자가 결제 취소한 경우
       if (e?.code === 'USER_CANCEL') {
         setError(null)
       } else {
@@ -177,41 +195,35 @@ export default function ReservationPage() {
     }
   }
 
-  // 토스페이먼츠 SDK 로더
   const loadTossPayments = (): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    // 이미 로드된 경우
-    if ((window as any).TossPayments) {
-      resolve((window as any).TossPayments(import.meta.env.VITE_TOSS_CLIENT_KEY))
-      return
-    }
-    const script = document.createElement('script')
-    script.src = 'https://js.tosspayments.com/v2/standard'  // v1 → v2
-    script.onload = () => {
-      try {
+    return new Promise((resolve, reject) => {
+      if ((window as any).TossPayments) {
         resolve((window as any).TossPayments(import.meta.env.VITE_TOSS_CLIENT_KEY))
-      } catch (e) {
-        reject(e)
+        return
       }
-    }
-    script.onerror = () => reject(new Error('토스페이먼츠 SDK 로드 실패'))
-    document.head.appendChild(script)
-  })
-}
+      const script = document.createElement('script')
+      script.src = 'https://js.tosspayments.com/v2/standard'
+      script.onload = () => {
+        try {
+          resolve((window as any).TossPayments(import.meta.env.VITE_TOSS_CLIENT_KEY))
+        } catch (e) {
+          reject(e)
+        }
+      }
+      script.onerror = () => reject(new Error('토스페이먼츠 SDK 로드 실패'))
+      document.head.appendChild(script)
+    })
+  }
 
-  // 결제 성공 후 실제 예약 생성 (successUrl로 리다이렉트 된 경우)
   useEffect(() => {
     const params = new URLSearchParams(location.search)
     const slotId = params.get('slotId')
     const paymentKey = params.get('paymentKey')
-    const orderId = params.get('orderId')
-    const amount = params.get('amount')
 
     if (slotId && paymentKey && token) {
       ;(async () => {
         try {
           setPaying(true)
-          // URL 파라미터에서 직접 읽기 (state 초기화 문제 방지)
           const isVirtualSlot = params.get('isVirtual') === 'true'
           const startTimeParam = params.get('startTime')
           const startTime = startTimeParam ? decodeURIComponent(startTimeParam) : null
@@ -222,7 +234,6 @@ export default function ReservationPage() {
               ? { counselor_id: counselorId, start_time: startTime }
               : {}),
           })
-          // URL 파라미터 제거 후 성공 화면
           navigate(`/reservation/${counselorId}`, { replace: true })
           setSuccess(true)
         } catch (e: any) {
@@ -234,7 +245,6 @@ export default function ReservationPage() {
       })()
     }
 
-    // 결제 실패로 돌아온 경우
     if (params.get('paymentFailed') === 'true') {
       setError('결제가 취소되었거나 실패했습니다. 다시 시도해주세요.')
       navigate(`/reservation/${counselorId}`, { replace: true })
@@ -351,18 +361,15 @@ export default function ReservationPage() {
           {/* 상담사 프로필 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '12px' }}>
             {counselor.profile_image ? (
-          <div style={{ width: '56px', height: '56px', borderRadius: '16px', overflow: 'hidden', flexShrink: 0, border: '2px solid #F5F0E8' }}>
-            <img 
-                src={counselor.profile_image} 
-                alt={counselor.name}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }} 
-               />
-            </div>
-                 ) : (
-            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: '#F5F0E8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Playfair Display', serif", fontSize: '22px', color: '#C4A882', flexShrink: 0 }}>
-               {counselor.name.charAt(0)}
-            </div>
-                )}
+              <div style={{ width: '56px', height: '56px', borderRadius: '16px', overflow: 'hidden', flexShrink: 0, border: '2px solid #F5F0E8' }}>
+                <img src={counselor.profile_image} alt={counselor.name}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }} />
+              </div>
+            ) : (
+              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: '#F5F0E8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Playfair Display', serif", fontSize: '22px', color: '#C4A882', flexShrink: 0 }}>
+                {counselor.name.charAt(0)}
+              </div>
+            )}
             <div>
               <p className="text-xs font-medium tracking-widest uppercase" style={{ color: '#C4A882', marginBottom: '4px' }}>심리 · 코칭 상담</p>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: '22px', fontWeight: 400, color: '#2C2420', margin: 0 }}>
@@ -379,7 +386,6 @@ export default function ReservationPage() {
 
             {/* 왼쪽: 달력 + 시간 선택 */}
             <div>
-              {/* 달력 헤더 */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                 <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: '16px', fontWeight: 400, color: '#2C2420', margin: 0 }}>
                   예약 가능한 시간
@@ -394,7 +400,6 @@ export default function ReservationPage() {
                     {calYear}년 {calMonth + 1}월
                   </span>
                   <button onClick={nextMonth}
-                    disabled={calMonth >= today.getMonth() + 1 && calYear === today.getFullYear() + 1}
                     style={{ background: 'none', border: '1px solid #EDE8E0', borderRadius: '8px', width: '28px', height: '28px', cursor: 'pointer', color: '#9E8E84', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     ›
                   </button>
@@ -403,13 +408,11 @@ export default function ReservationPage() {
 
               {/* 달력 그리드 */}
               <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '20px', marginBottom: '20px' }}>
-                {/* 요일 헤더 */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: '8px' }}>
                   {WEEKDAYS.map(w => (
                     <div key={w} style={{ textAlign: 'center', fontSize: '11px', color: '#9E8E84', padding: '4px 0', fontWeight: 500 }}>{w}</div>
                   ))}
                 </div>
-                {/* 날짜 셀 */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
                   {calCells.map((day, idx) => {
                     if (!day) return <div key={idx} />
@@ -419,7 +422,6 @@ export default function ReservationPage() {
                     const isSelected = selectedDate === dateKey
                     const isPast = new Date(dateKey) < new Date(today.toDateString())
                     const isToday = dateKey === today.toISOString().slice(0, 10)
-                    // 클릭 가능: 슬롯이 하나라도 있는 날짜 (예약 불가 포함, 과거 제외)
                     const isClickable = hasAny && !isPast
                     return (
                       <div
@@ -430,30 +432,19 @@ export default function ReservationPage() {
                           setSelectedSlot(null)
                         }}
                         style={{
-                          textAlign: 'center',
-                          padding: '8px 4px',
-                          borderRadius: '8px',
-                          fontSize: '13px',
+                          textAlign: 'center', padding: '8px 4px', borderRadius: '8px', fontSize: '13px',
                           cursor: isClickable ? 'pointer' : 'default',
                           background: isSelected ? '#2C2420' : isClickable ? '#F5F0E8' : 'transparent',
                           color: isSelected ? '#FAF8F5' : isPast ? '#DDD5C8' : isClickable ? '#2C2420' : '#9E8E84',
-                          fontWeight: isToday ? 600 : 400,
-                          transition: 'all 0.15s',
-                          position: 'relative',
+                          fontWeight: isToday ? 600 : 400, transition: 'all 0.15s', position: 'relative',
                         }}
-                        onMouseEnter={(e) => {
-                          if (isClickable && !isSelected)
-                            (e.currentTarget as HTMLDivElement).style.background = '#EDE8E0'
-                        }}
+                        onMouseEnter={(e) => { if (isClickable && !isSelected) (e.currentTarget as HTMLDivElement).style.background = '#EDE8E0' }}
                         onMouseLeave={(e) => {
-                          if (isClickable && !isSelected)
-                            (e.currentTarget as HTMLDivElement).style.background = '#F5F0E8'
-                          else if (!isClickable)
-                            (e.currentTarget as HTMLDivElement).style.background = 'transparent'
+                          if (isClickable && !isSelected) (e.currentTarget as HTMLDivElement).style.background = '#F5F0E8'
+                          else if (!isClickable) (e.currentTarget as HTMLDivElement).style.background = 'transparent'
                         }}
                       >
                         {day}
-                        {/* 예약 가능 dot */}
                         {hasAvailable && !isSelected && (
                           <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#C4A882', margin: '2px auto 0' }} />
                         )}
@@ -463,7 +454,7 @@ export default function ReservationPage() {
                 </div>
               </div>
 
-              {/* 선택된 날짜의 시간 슬롯 */}
+              {/* 시간 슬롯 */}
               {selectedDate && (
                 <div>
                   <p style={{ fontSize: '13px', fontWeight: 500, color: '#2C2420', marginBottom: '10px' }}>
@@ -474,36 +465,22 @@ export default function ReservationPage() {
                       const isSelected = selectedSlot?.id === slot.id
                       const canSelect = slot.is_available
                       const reasonLabel: Record<string, string> = {
-                        time_passed: '시간 초과',
-                        blocked: '상담 불가',
-                        reserved: '예약 완료',
+                        time_passed: '시간 초과', blocked: '상담 불가', reserved: '예약 완료',
                       }
                       return (
                         <button
                           key={slot.id}
                           onClick={() => canSelect && setSelectedSlot(isSelected ? null : slot)}
                           style={{
-                            position: 'relative',
-                            padding: canSelect ? '8px 16px' : '6px 16px',
+                            position: 'relative', padding: canSelect ? '8px 16px' : '6px 16px',
                             borderRadius: '100px',
-                            border: isSelected
-                              ? '1.5px solid #2C2420'
-                              : canSelect
-                              ? '1px solid #EDE8E0'
-                              : '1px solid #E0E0E0',
+                            border: isSelected ? '1.5px solid #2C2420' : canSelect ? '1px solid #EDE8E0' : '1px solid #E0E0E0',
                             background: isSelected ? '#2C2420' : canSelect ? '#fff' : '#F5F5F5',
                             color: isSelected ? '#FAF8F5' : canSelect ? '#2C2420' : '#BDBDBD',
-                            fontSize: '13px',
-                            cursor: canSelect ? 'pointer' : 'not-allowed',
-                            transition: 'all 0.2s',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            minWidth: '130px',
-                            textAlign: 'center',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            gap: '1px',
+                            fontSize: '13px', cursor: canSelect ? 'pointer' : 'not-allowed',
+                            transition: 'all 0.2s', whiteSpace: 'nowrap', overflow: 'hidden',
+                            minWidth: '130px', textAlign: 'center',
+                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px',
                           }}
                           onMouseEnter={(e) => {
                             if (canSelect && !isSelected) {
@@ -518,13 +495,9 @@ export default function ReservationPage() {
                             }
                           }}
                         >
-                          {/* 빗금 오버레이 — 예약 불가 슬롯 */}
                           {!canSelect && (
-                            <svg
-                              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: '100px' }}
-                              xmlns="http://www.w3.org/2000/svg"
-                              preserveAspectRatio="none"
-                            >
+                            <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: '100px' }}
+                              xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
                               <defs>
                                 <pattern id={`h-${slot.id.slice(-6)}`} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
                                   <line x1="0" y1="0" x2="0" y2="8" stroke="#D0D0D0" strokeWidth="1.2" />
@@ -580,10 +553,7 @@ export default function ReservationPage() {
                     <p className="text-xs font-light" style={{ color: '#9E8E84', marginBottom: '20px' }}>
                       {getDuration(selectedSlot.start_time, selectedSlot.end_time)}
                     </p>
-
                     <div className="h-px" style={{ background: '#EDE8E0', width: '100%', marginBottom: '16px' }} />
-
-                    {/* 예약금 안내 */}
                     <div style={{ width: '100%', background: '#FAF8F5', borderRadius: '10px', padding: '12px 14px', marginBottom: '16px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span className="text-sm font-light" style={{ color: '#9E8E84' }}>예약금</span>
@@ -591,11 +561,9 @@ export default function ReservationPage() {
                       </div>
                       <p style={{ fontSize: '11px', color: '#C4A882', margin: '4px 0 0' }}>상담 후 전액 환급됩니다</p>
                     </div>
-
                     {error && (
                       <p className="text-sm" style={{ color: '#C0392B', marginBottom: '12px', width: '100%' }}>{error}</p>
                     )}
-
                     <button
                       onClick={handlePayAndReserve}
                       disabled={paying}
@@ -606,7 +574,6 @@ export default function ReservationPage() {
                     >
                       {paying ? '처리 중...' : '결제 후 예약 확정'}
                     </button>
-
                     <p style={{ fontSize: '11px', color: '#9E8E84', textAlign: 'center', marginTop: '10px', width: '100%' }}>
                       토스페이먼츠 안전 결제
                     </p>
@@ -619,6 +586,71 @@ export default function ReservationPage() {
               </div>
             </div>
           </div>
+
+          {/* ── 리뷰 섹션 ── */}
+          <div style={{ marginTop: '56px' }}>
+            <div className="h-px" style={{ background: '#EDE8E0', marginBottom: '32px' }} />
+
+            {/* 리뷰 헤더 */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+              <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: '18px', fontWeight: 400, color: '#2C2420', margin: 0 }}>
+                상담 후기
+              </h3>
+              {reviews.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <StarRating rating={Math.round(avgRating)} />
+                  <span style={{ fontSize: '15px', fontWeight: 500, color: '#2C2420' }}>{avgRating.toFixed(1)}</span>
+                  <span style={{ fontSize: '13px', color: '#9E8E84' }}>({reviews.length}개)</span>
+                </div>
+              )}
+            </div>
+
+            {/* 리뷰 목록 */}
+            {reviewsLoading ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#9E8E84', fontSize: '14px' }}>
+                불러오는 중...
+              </div>
+            ) : reviews.length === 0 ? (
+              <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '48px', textAlign: 'center' }}>
+                <p style={{ fontSize: '15px', color: '#9E8E84', marginBottom: '4px' }}>아직 작성된 후기가 없습니다.</p>
+                <p className="text-sm font-light" style={{ color: '#C4A882' }}>첫 번째 후기를 남겨보세요</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {reviews.map((review) => (
+                  <div key={review.id} className="rounded-2xl"
+                    style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '24px 28px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {/* 아바타 */}
+                        <div style={{
+                          width: '32px', height: '32px', borderRadius: '50%',
+                          background: '#F5F0E8', color: '#C4A882',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '13px', fontWeight: 500, flexShrink: 0,
+                        }}>
+                          {review.client_name[0]}
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '14px', fontWeight: 500, color: '#2C2420', margin: 0 }}>
+                            {review.client_name}
+                          </p>
+                          <p style={{ fontSize: '11px', color: '#9E8E84', margin: 0 }}>
+                            {new Date(review.created_at).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' })}
+                          </p>
+                        </div>
+                      </div>
+                      <StarRating rating={review.rating} />
+                    </div>
+                    <p style={{ fontSize: '14px', color: '#6B5B4E', lineHeight: 1.7, margin: 0 }}>
+                      {review.content}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
         </div>
       )}
     </div>
