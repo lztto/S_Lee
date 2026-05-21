@@ -198,8 +198,8 @@ export default function MyReservationsPage() {
   const formatDateTime = (isoString: string) => {
     const date = new Date(isoString)
     return {
-      date: date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }),
-      time: date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+      date: date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', timeZone: 'Asia/Seoul' }),
+      time: date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' }),
     }
   }
 
