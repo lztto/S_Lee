@@ -40,8 +40,8 @@ export default function PaymentSuccessPage() {
   }, [])
 
   const fmt = (iso: string) => new Date(iso)
-  const fmtDate = (iso: string) => fmt(iso).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
-  const fmtTime = (iso: string) => fmt(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+  const fmtDate = (iso: string) => fmt(iso).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Seoul' })
+  const fmtTime = (iso: string) => fmt(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' })
   const fmtAmt  = (v: string)   => Number(v).toLocaleString('ko-KR') + '원'
 
   const name  = reservation?.counselor_name ?? counselorName
