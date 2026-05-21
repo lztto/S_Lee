@@ -21,32 +21,21 @@ KST_OFFSET = timedelta(hours=9)
 
 def build_slots(
     counselor_id: str,
-    blocked_set: set,       # {(date, start_hour), ...}
-    existing_slots: dict,   # {(date, start_hour): {"id": ..., "is_available": ...}}
+    blocked_set: set,
+    existing_slots: dict,
     days_ahead: int = 30,
 ) -> list[dict]:
-    """
-    오늘 포함 days_ahead일 동안 모든 슬롯을 반환.
-    - is_available=True  → 예약 가능 (선택 가능)
-    - is_available=False → 예약 불가 (회색 빗금 표시용)
-
-    불가 사유:
-      1. 시작 30분 전 이미 지남 (시간 초과)
-      2. blocked_slots 에 차단됨
-      3. time_slots 에 is_available=False (예약 완료)
-    """
     now_utc = datetime.now(timezone.utc)
     now_kst = now_utc + KST_OFFSET
     today_kst = now_kst.date()
-    cutoff = now_utc + timedelta(minutes=30)  # 30분 후가 예약 가능 최소 기준
+    cutoff = now_utc + timedelta(minutes=30)
 
     result = []
 
-    for delta in range(0, days_ahead + 1):   # 0 = 오늘 포함
+    for delta in range(0, days_ahead + 1):
         target_date = today_kst + timedelta(days=delta)
 
         for start_h, end_h in TIME_BLOCKS:
-            # UTC 변환
             start_utc = datetime(
                 target_date.year, target_date.month, target_date.day,
                 start_h, 0, tzinfo=timezone.utc
@@ -56,21 +45,18 @@ def build_slots(
                 end_h, 0, tzinfo=timezone.utc
             ) - KST_OFFSET
 
-            # 불가 사유 판단 — 우선순위: reserved > blocked > time_passed
             existing     = existing_slots.get((target_date, start_h))
-            is_reserved  = bool(existing and not existing["is_available"])  # 예약 완료
-            is_blocked   = (target_date, start_h) in blocked_set            # 상담사 차단
-            time_passed  = start_utc <= cutoff                              # 30분 이내 또는 지남
+            is_reserved  = bool(existing and not existing["is_available"])
+            is_blocked   = (target_date, start_h) in blocked_set
+            time_passed  = start_utc <= cutoff
 
             unavailable = time_passed or is_blocked or is_reserved
 
-            # 슬롯 ID
             if existing:
                 slot_id = existing["id"]
             else:
                 slot_id = f"virtual_{counselor_id}_{target_date}_{start_h}"
 
-            # 불가 사유 라벨 — reserved를 가장 먼저 체크 (당일 예약된 슬롯이 time_passed로 오표시되던 문제 수정)
             if is_reserved:
                 reason = "reserved"
             elif is_blocked:
@@ -85,7 +71,7 @@ def build_slots(
                 "start_time": start_utc.isoformat(),
                 "end_time": end_utc.isoformat(),
                 "is_available": not unavailable,
-                "reason": reason,          # None | "time_passed" | "blocked" | "reserved"
+                "reason": reason,
                 "is_virtual": not bool(existing),
             })
 
@@ -97,7 +83,7 @@ def build_slots(
 async def get_counselors(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         text("""
-            SELECT id, name, email, created_at
+            SELECT id, name, email, created_at, profile_image
             FROM users
             WHERE role = 'counselor' AND is_active = true
             ORDER BY created_at DESC
@@ -106,7 +92,13 @@ async def get_counselors(db: AsyncSession = Depends(get_db)):
     counselors = result.fetchall()
     return {
         "data": [
-            {"id": str(r.id), "name": r.name, "email": r.email, "created_at": str(r.created_at)}
+            {
+                "id": str(r.id),
+                "name": r.name,
+                "email": r.email,
+                "created_at": str(r.created_at),
+                "profile_image": r.profile_image,
+            }
             for r in counselors
         ],
         "message": "success",
@@ -120,7 +112,7 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
     # 상담사 정보
     result = await db.execute(
         text("""
-            SELECT id, name, email, created_at
+            SELECT id, name, email, created_at, profile_image
             FROM users
             WHERE id = :id AND role = 'counselor' AND is_active = true
         """),
@@ -172,6 +164,7 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
             "name": counselor.name,
             "email": counselor.email,
             "created_at": str(counselor.created_at),
+            "profile_image": counselor.profile_image,
             "available_slots": all_slots,
         },
         "message": "success",
