@@ -404,7 +404,7 @@ const MainPage = () => {
               <p className="text-xs tracking-widest uppercase mb-2" style={{ color: '#C4A882' }}>상담 비용</p>
               <p className="text-2xl"
                 style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontWeight: 400 }}>
-                1회 50분 · <em style={{ color: '#C4A882', fontStyle: 'italic' }}>80,000원</em>
+                1회  · <em style={{ color: '#C4A882', fontStyle: 'italic' }}>50,000원</em>
               </p>
             </div>
             <button

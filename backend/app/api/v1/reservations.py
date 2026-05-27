@@ -39,7 +39,14 @@ async def create_reservation(
         if not data.counselor_id or not data.start_time:
             raise HTTPException(status_code=400, detail="가상 슬롯 예약 시 counselor_id와 start_time이 필요합니다")
 
-        start_dt = datetime.fromisoformat(data.start_time.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
+        # ISO string 파싱 → naive UTC
+        # sessionStorage 경유 시 '+' → ' ' 변환 문제 방지
+        raw = data.start_time.replace("Z", "+00:00").replace(" ", "+")
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is not None:
+            start_dt = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        else:
+            start_dt = parsed  # 이미 naive UTC로 가정
         kst_hour = (start_dt + KST_OFFSET).hour
 
         if kst_hour not in VALID_HOURS:
@@ -120,16 +127,25 @@ async def create_reservation(
     if counselor_id_for_check == current_user["id"]:
         raise HTTPException(status_code=400, detail="본인 슬롯은 예약할 수 없습니다")
 
-    # 예약 생성
+    # 예약 생성 — ON CONFLICT: 같은 slot_id로 이미 예약된 경우 기존 예약 반환 (중복 실행 방지)
     res = await db.execute(
         text("""
             INSERT INTO reservations (slot_id, client_id, status)
             VALUES (:slot_id, :client_id, 'confirmed')
+            ON CONFLICT (slot_id) DO NOTHING
             RETURNING id, slot_id, client_id, status, created_at
         """),
         {"slot_id": actual_slot_id, "client_id": current_user["id"]}
     )
     reservation = res.fetchone()
+
+    # ON CONFLICT로 INSERT 스킵된 경우 → 기존 예약 조회
+    if reservation is None:
+        existing_res = await db.execute(
+            text("SELECT id, slot_id, client_id, status, created_at FROM reservations WHERE slot_id = :slot_id"),
+            {"slot_id": actual_slot_id}
+        )
+        reservation = existing_res.fetchone()
 
     # 슬롯 비활성화
     await db.execute(

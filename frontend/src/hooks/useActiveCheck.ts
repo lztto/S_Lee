@@ -20,14 +20,19 @@ export function useActiveCheck() {
           navigate('/login')
         }
       } catch (error: any) {
-        // 403 비활성화 에러일 때만 로그아웃
-        if (error.response?.status === 403 &&
+        const status = error.response?.status
+
+        if (status === 403 &&
             error.response?.data?.detail === '비활성화된 계정입니다') {
           logout()
           alert('계정이 비활성화되었습니다. 관리자에게 문의하세요.')
           navigate('/login')
         }
-        // 그 외 에러(네트워크 등)는 무시
+
+        if (status === 401) {
+          logout()
+          navigate('/login')
+        }
       }
     }
 
