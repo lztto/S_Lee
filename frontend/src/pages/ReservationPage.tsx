@@ -268,7 +268,6 @@ export default function ReservationPage() {
         sessionStorage.removeItem('toss_isVirtual')
         sessionStorage.removeItem('toss_counselorId')
         sessionStorage.removeItem('toss_counselorName')
-        sessionStorage.removeItem('toss_counselorName')
 
         if (!savedSlotId) {
           setError('예약 정보를 찾을 수 없습니다. 다시 시도해주세요.')
@@ -289,6 +288,7 @@ export default function ReservationPage() {
           ? new Date(new Date(savedStartTime).getTime() + 2 * 60 * 60 * 1000).toISOString()
           : ''
 
+        sessionStorage.removeItem(processedKey)  // 성공 후 플래그 제거
         navigate(
           `/payment-success` +
           `?reservationId=${reservationId}` +

@@ -3,6 +3,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
+from datetime import timezone as _tz
+
+def _to_utc_iso(dt) -> str | None:
+    """DB의 TIMESTAMPTZ를 ISO string으로 반환.
+    Supabase+asyncpg는 항상 UTC aware로 반환하므로 그대로 isoformat() 사용.
+    """
+    if dt is None:
+        return None
+    # tzinfo 있으면 그대로 ISO (UTC+0 또는 다른 offset 포함)
+    return dt.isoformat()
+
+
 
 from app.db.session import get_db
 from app.api.v1.dependencies import get_current_user
@@ -39,21 +51,21 @@ async def create_reservation(
         if not data.counselor_id or not data.start_time:
             raise HTTPException(status_code=400, detail="가상 슬롯 예약 시 counselor_id와 start_time이 필요합니다")
 
-        # ISO string 파싱 → naive UTC
+        # ISO string 파싱 → UTC aware datetime
         # sessionStorage 경유 시 '+' → ' ' 변환 문제 방지
         raw = data.start_time.replace("Z", "+00:00").replace(" ", "+")
         parsed = datetime.fromisoformat(raw)
         if parsed.tzinfo is not None:
-            start_dt = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            start_dt = parsed.astimezone(timezone.utc)  # aware UTC
         else:
-            start_dt = parsed  # 이미 naive UTC로 가정
+            start_dt = parsed.replace(tzinfo=timezone.utc)  # naive → aware UTC
         kst_hour = (start_dt + KST_OFFSET).hour
 
         if kst_hour not in VALID_HOURS:
             raise HTTPException(status_code=400, detail="유효하지 않은 상담 시간대입니다")
 
         # end_time 계산 (2시간)
-        end_dt = start_dt + timedelta(hours=2)
+        end_dt = start_dt + timedelta(hours=2)  # aware UTC
 
         # 차단된 시간인지 확인
         kst_date = (start_dt + KST_OFFSET).date()
@@ -204,8 +216,8 @@ async def get_my_reservations(
             "journal_id": str(m["journal_id"]) if m["journal_id"] else None,
             "review_id": str(m["review_id"]) if m["review_id"] else None,
             "slot": {
-                "start_time": m["slot_start_time"].isoformat() if m["slot_start_time"] else None,
-                "end_time": m["slot_end_time"].isoformat() if m["slot_end_time"] else None,
+                "start_time": _to_utc_iso(m["slot_start_time"]),
+                "end_time":   _to_utc_iso(m["slot_end_time"]),
             },
         })
     return {"data": items, "message": "success", "total": len(items)}
@@ -246,8 +258,8 @@ async def get_counselor_reservations(
             "client_name": m["client_name"],
             "journal_id": str(m["journal_id"]) if m["journal_id"] else None,
             "slot": {
-                "start_time": m["slot_start_time"].isoformat() if m["slot_start_time"] else None,
-                "end_time": m["slot_end_time"].isoformat() if m["slot_end_time"] else None,
+                "start_time": _to_utc_iso(m["slot_start_time"]),
+                "end_time":   _to_utc_iso(m["slot_end_time"]),
             },
         })
     return {"data": items, "message": "success", "total": len(items)}

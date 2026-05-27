@@ -32,7 +32,13 @@ api.interceptors.response.use(
     const status = error.response?.status
     const url = error.config?.url ?? ''
 
-    if (status === 401 && !url.includes('/auth/me')) {
+    // 401 자동 로그아웃: auth/me, reservations 등 인증 확인 요청은 제외
+    // 토스 리다이렉트 후 일시적 401로 로그아웃되는 문제 방지
+    const isAuthCheck = url.includes('/auth/me')
+    const isPaymentCallback = window.location.search.includes('paymentKey') ||
+                              window.location.search.includes('paymentFailed')
+
+    if (status === 401 && !isAuthCheck && !isPaymentCallback) {
       useAuthStore.getState().logout()
       window.location.href = '/login'
     }
