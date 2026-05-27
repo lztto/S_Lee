@@ -31,7 +31,6 @@ function toDateKey(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
-// ── 일지 타입 ─────────────────────────────────────────────
 interface JournalItem {
   id: string
   reservation_id: string
@@ -60,6 +59,7 @@ export default function CounselorDashboard() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
 
   // ── 일지 상태 ─────────────────────────────────────────────
+  const [expandedClient, setExpandedClient]           = useState<string | null>(null)
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null)
   const [journalTitle, setJournalTitle]               = useState('')
   const [journalContent, setJournalContent]           = useState('')
@@ -74,7 +74,6 @@ export default function CounselorDashboard() {
     fetchReservations()
   }, [])
 
-  // 예약 선택 시 기존 일지 조회
   useEffect(() => {
     if (!selectedReservation) return
     fetchJournal(selectedReservation.id)
@@ -84,7 +83,7 @@ export default function CounselorDashboard() {
     try {
       setSlotsLoading(true)
       setBlockedSlots(await getBlockedSlots())
-    } catch { /* 조용히 처리 */ }
+    } catch { }
     finally { setSlotsLoading(false) }
   }
 
@@ -97,7 +96,6 @@ export default function CounselorDashboard() {
     finally { setReservationsLoading(false) }
   }
 
-  // ── 기존 일지 조회 (/journals/me 에서 필터링) ──
   const fetchJournal = async (reservationId: string) => {
     try {
       setJournalLoading(true)
@@ -164,7 +162,6 @@ export default function CounselorDashboard() {
     }
   }
 
-  // 차단 세트
   const blockedSet = useMemo(() => {
     const s = new Set<string>()
     for (const b of blockedSlots) s.add(`${b.blocked_date}_${b.start_hour}`)
@@ -207,6 +204,25 @@ export default function CounselorDashboard() {
     r => r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') < now
   )
 
+  // ── 내담자별 그룹핑 ───────────────────────────────────────
+  const clientGroups = useMemo(() => {
+    const map = new Map<string, { clientName: string; reservations: Reservation[] }>()
+    for (const r of completedReservations) {
+      const key = r.client_id
+      if (!map.has(key)) {
+        map.set(key, { clientName: r.client_name ?? '내담자', reservations: [] })
+      }
+      map.get(key)!.reservations.push(r)
+    }
+    return Array.from(map.entries()).map(([clientId, group]) => ({
+      clientId,
+      clientName: group.clientName,
+      reservations: group.reservations.sort(
+        (a, b) => new Date(b.slot?.start_time ?? '').getTime() - new Date(a.slot?.start_time ?? '').getTime()
+      ),
+    }))
+  }, [completedReservations])
+
   const prevMonth = () => {
     if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11) }
     else setCalMonth(m => m - 1)
@@ -246,9 +262,9 @@ export default function CounselorDashboard() {
         {/* 요약 카드 */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '32px' }}>
           {[
-            { label: '차단된 시간대', value: blockedSlots.length, unit: '개',  desc: '비활성화됨' },
-            { label: '예정된 상담',   value: upcomingCount,       unit: '건',  desc: '확정 예약' },
-            { label: '기본 운영 시간', value: '10 — 22',          unit: 'KST', desc: '점심 12~14 제외' },
+            { label: '차단된 시간대',  value: blockedSlots.length, unit: '개',  desc: '비활성화됨' },
+            { label: '예정된 상담',    value: upcomingCount,       unit: '건',  desc: '확정 예약' },
+            { label: '기본 운영 시간', value: '10 — 22',           unit: 'KST', desc: '점심 12~14 제외' },
           ].map(card => (
             <div key={card.label} className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '18px 22px' }}>
               <p className="text-sm font-light" style={{ color: '#9E8E84', margin: '0 0 4px' }}>{card.label}</p>
@@ -355,7 +371,6 @@ export default function CounselorDashboard() {
               </div>
             </div>
 
-            {/* 오른쪽: 시간대 토글 */}
             <div style={{ position: 'sticky', top: '80px' }}>
               <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: '15px', fontWeight: 400, color: '#2C2420', marginBottom: '14px' }}>
                 {selectedDate
@@ -469,46 +484,115 @@ export default function CounselorDashboard() {
         {activeTab === 'journal' && (
           <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: '24px', alignItems: 'start' }}>
 
-            {/* 왼쪽: 완료된 예약 목록 */}
+            {/* 왼쪽: 내담자별 그룹 목록 */}
             <div>
               <p style={{ fontSize: '13px', fontWeight: 500, color: '#2C2420', marginBottom: '12px' }}>
                 상담 완료 목록
               </p>
               {reservationsLoading ? (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: '#9E8E84', fontSize: '14px' }}>불러오는 중...</div>
-              ) : completedReservations.length === 0 ? (
+              ) : clientGroups.length === 0 ? (
                 <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '32px 20px', textAlign: 'center' }}>
                   <p className="text-sm font-light" style={{ color: '#9E8E84' }}>완료된 상담이 없습니다.</p>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {completedReservations.map(r => {
-                    const startDt = r.slot ? formatDateTime(r.slot.start_time) : null
-                    const isSelected = selectedReservation?.id === r.id
+                  {clientGroups.map(group => {
+                    const isExpanded = expandedClient === group.clientId
+                    const hasAnyJournal = group.reservations.some(r => r.journal_id)
                     return (
-                      <div key={r.id}
-                        onClick={() => setSelectedReservation(r)}
-                        className="rounded-xl"
-                        style={{
-                          background: isSelected ? '#2C2420' : '#fff',
-                          border: `1px solid ${isSelected ? '#2C2420' : '#EDE8E0'}`,
-                          padding: '14px 16px', cursor: 'pointer', transition: 'all 0.15s',
-                        }}
-                        onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.borderColor = '#C4A882' }}
-                        onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.borderColor = '#EDE8E0' }}
-                      >
-                        <p style={{ fontSize: '14px', fontWeight: 500, color: isSelected ? '#FAF8F5' : '#2C2420', margin: '0 0 4px' }}>
-                          {r.client_name ?? '내담자'}
-                        </p>
-                        {startDt && (
-                          <p style={{ fontSize: '12px', color: isSelected ? '#C4A882' : '#9E8E84', margin: 0 }}>
-                            {startDt.date} {startDt.time}
-                          </p>
-                        )}
-                        {r.journal_id && (
-                          <span style={{ display: 'inline-block', marginTop: '6px', fontSize: '11px', fontWeight: 500, padding: '2px 8px', borderRadius: '100px', background: isSelected ? '#C4A882' : '#F5F0E8', color: isSelected ? '#FAF8F5' : '#C4A882' }}>
-                            일지 작성됨
-                          </span>
+                      <div key={group.clientId}>
+
+                        {/* 내담자 헤더 카드 */}
+                        <div
+                          onClick={() => {
+                            setExpandedClient(isExpanded ? null : group.clientId)
+                            setSelectedReservation(null)
+                          }}
+                          className="rounded-xl"
+                          style={{
+                            background: isExpanded ? '#2C2420' : '#fff',
+                            border: `1px solid ${isExpanded ? '#2C2420' : '#EDE8E0'}`,
+                            padding: '14px 16px', cursor: 'pointer', transition: 'all 0.15s',
+                          }}
+                          onMouseEnter={(e) => { if (!isExpanded) (e.currentTarget as HTMLDivElement).style.borderColor = '#C4A882' }}
+                          onMouseLeave={(e) => { if (!isExpanded) (e.currentTarget as HTMLDivElement).style.borderColor = '#EDE8E0' }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              {/* 아바타 */}
+                              <div style={{
+                                width: 32, height: 32, borderRadius: '50%',
+                                background: isExpanded ? '#C4A882' : '#F5F0E8',
+                                color: isExpanded ? '#FAF8F5' : '#C4A882',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: '13px', fontWeight: 500, flexShrink: 0,
+                              }}>
+                                {group.clientName[0]}
+                              </div>
+                              <div>
+                                <p style={{ fontSize: '14px', fontWeight: 500, color: isExpanded ? '#FAF8F5' : '#2C2420', margin: 0 }}>
+                                  {group.clientName}
+                                </p>
+                                <p style={{ fontSize: '11px', color: isExpanded ? '#C4A882' : '#9E8E84', margin: 0 }}>
+                                  상담 {group.reservations.length}회
+                                </p>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              {hasAnyJournal && (
+                                <span style={{
+                                  fontSize: '10px', fontWeight: 500, padding: '2px 7px', borderRadius: '100px',
+                                  background: isExpanded ? '#C4A882' : '#F5F0E8',
+                                  color: isExpanded ? '#FAF8F5' : '#C4A882',
+                                }}>
+                                  일지 있음
+                                </span>
+                              )}
+                              <span style={{ fontSize: '11px', color: isExpanded ? '#C4A882' : '#9E8E84' }}>
+                                {isExpanded ? '▲' : '▼'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 펼쳐지는 상담 날짜 목록 */}
+                        {isExpanded && (
+                          <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '8px' }}>
+                            {group.reservations.map(r => {
+                              const startDt = r.slot ? formatDateTime(r.slot.start_time) : null
+                              const isSelected = selectedReservation?.id === r.id
+                              return (
+                                <div
+                                  key={r.id}
+                                  onClick={() => setSelectedReservation(r)}
+                                  className="rounded-xl"
+                                  style={{
+                                    background: isSelected ? '#F5F0E8' : '#FAF8F5',
+                                    border: `1px solid ${isSelected ? '#C4A882' : '#EDE8E0'}`,
+                                    padding: '10px 14px', cursor: 'pointer', transition: 'all 0.15s',
+                                  }}
+                                  onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.borderColor = '#C4A882' }}
+                                  onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.borderColor = '#EDE8E0' }}
+                                >
+                                  {startDt && (
+                                    <p style={{ fontSize: '12px', fontWeight: isSelected ? 500 : 400, color: isSelected ? '#2C2420' : '#6B5B4E', margin: '0 0 4px' }}>
+                                      {startDt.date} {startDt.time}
+                                    </p>
+                                  )}
+                                  {r.journal_id ? (
+                                    <span style={{ fontSize: '10px', fontWeight: 500, padding: '2px 7px', borderRadius: '100px', background: '#EAF3DE', color: '#3B6D11' }}>
+                                      일지 작성됨
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize: '10px', fontWeight: 500, padding: '2px 7px', borderRadius: '100px', background: '#FFF3E0', color: '#C4A882' }}>
+                                      미작성
+                                    </span>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
                         )}
                       </div>
                     )
@@ -522,7 +606,7 @@ export default function CounselorDashboard() {
               {!selectedReservation ? (
                 <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '60px 40px', textAlign: 'center' }}>
                   <p style={{ fontSize: '15px', color: '#9E8E84', fontWeight: 300 }}>
-                    왼쪽에서 상담을 선택하면<br />일지를 작성할 수 있습니다.
+                    왼쪽에서 내담자를 선택하고<br />날짜를 클릭하면 일지를 작성할 수 있습니다.
                   </p>
                 </div>
               ) : journalLoading ? (
@@ -530,7 +614,6 @@ export default function CounselorDashboard() {
               ) : (
                 <div className="rounded-2xl" style={{ background: '#fff', border: '1px solid #EDE8E0', padding: '28px' }}>
 
-                  {/* 예약 정보 */}
                   <div style={{ marginBottom: '20px' }}>
                     <p className="text-xs font-medium tracking-widest uppercase" style={{ color: '#C4A882', marginBottom: '6px' }}>
                       {existingJournal ? '일지 수정' : '일지 작성'}
@@ -547,7 +630,7 @@ export default function CounselorDashboard() {
 
                   <div className="h-px" style={{ background: '#EDE8E0', marginBottom: '20px' }} />
 
-                  {/* 제목 입력 */}
+                  {/* 제목 */}
                   <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: '12px', fontWeight: 500, color: '#9E8E84', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
                       상담 핵심 주제 <span style={{ color: '#C0392B' }}>*</span>
@@ -568,7 +651,7 @@ export default function CounselorDashboard() {
                     />
                   </div>
 
-                  {/* 일지 내용 */}
+                  {/* 내용 */}
                   <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: '12px', fontWeight: 500, color: '#9E8E84', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
                       상담 내용 <span style={{ color: '#C0392B' }}>*</span>
@@ -590,28 +673,14 @@ export default function CounselorDashboard() {
                     />
                   </div>
 
-                  {/* 비공개 설정 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', padding: '12px 16px', borderRadius: '12px', background: '#FAF8F5', border: '1px solid #EDE8E0' }}>
-                    <input
-                      type="checkbox"
-                      id="journal-private"
-                      checked={journalPrivate}
-                      onChange={(e) => setJournalPrivate(e.target.checked)}
-                      style={{ width: '16px', height: '16px', accentColor: '#2C2420', cursor: 'pointer' }}
-                    />
-                    <label htmlFor="journal-private" style={{ fontSize: '13px', color: '#2C2420', cursor: 'pointer', userSelect: 'none' }}>
-                      비공개 일지 (내담자에게 공개하지 않음)
-                    </label>
-                  </div>
+                  
 
-                  {/* 메세지 */}
                   {journalMsg && (
                     <p style={{ fontSize: '13px', marginBottom: '12px', color: journalMsg.includes('실패') || journalMsg.includes('입력') || journalMsg.includes('제목') ? '#C0392B' : '#5A8A6A' }}>
                       {journalMsg}
                     </p>
                   )}
 
-                  {/* 저장 버튼 */}
                   <button
                     onClick={handleSaveJournal}
                     disabled={journalSaving}
@@ -636,4 +705,4 @@ export default function CounselorDashboard() {
       </div>
     </div>
   )
-} 
+}
