@@ -8,7 +8,6 @@ from app.db.session import get_db
 
 router = APIRouter(prefix="/counselors", tags=["counselors"])
 
-# KST 기준 상담 시간대 (start_hour, end_hour)
 TIME_BLOCKS = [
     (10, 12),
     (14, 16),
@@ -32,11 +31,14 @@ def build_slots(
     counselor_id: str,
     blocked_set: set,
     existing_slots: dict,
+    existing_slots: dict,
     days_ahead: int = 30,
 ) -> list[dict]:
     now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
     now_kst = now_utc + KST_OFFSET
     today_kst = now_kst.date()
+    cutoff = now_utc + timedelta(minutes=30)
     cutoff = now_utc + timedelta(minutes=30)
 
     result = []
@@ -45,6 +47,26 @@ def build_slots(
         target_date = today_kst + timedelta(days=delta)
 
         for start_h, end_h in TIME_BLOCKS:
+            start_utc = datetime(
+                target_date.year, target_date.month, target_date.day,
+                start_h, 0, tzinfo=timezone.utc
+            ) - KST_OFFSET
+            end_utc = datetime(
+                target_date.year, target_date.month, target_date.day,
+                end_h, 0, tzinfo=timezone.utc
+            ) - KST_OFFSET
+
+            existing     = existing_slots.get((target_date, start_h))
+            is_reserved  = bool(existing and not existing["is_available"])
+            is_blocked   = (target_date, start_h) in blocked_set
+            time_passed  = start_utc <= cutoff
+
+            unavailable = time_passed or is_blocked or is_reserved
+
+            if existing:
+                slot_id = existing["id"]
+            else:
+                slot_id = f"virtual_{counselor_id}_{target_date}_{start_h}"
             start_utc = datetime(
                 target_date.year, target_date.month, target_date.day,
                 start_h, 0, tzinfo=timezone.utc
@@ -78,6 +100,8 @@ def build_slots(
             # UTC ISO string으로 반환 (+00:00 suffix)
             result.append({
                 "id": slot_id,
+                "start_time": start_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+                "end_time":   end_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
                 "start_time": start_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
                 "end_time":   end_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
                 "is_available": not unavailable,
@@ -129,7 +153,6 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
     if not counselor:
         raise HTTPException(status_code=404, detail="상담사를 찾을 수 없습니다")
 
-    # 차단된 슬롯 조회
     blocked_result = await db.execute(
         text("""
             SELECT blocked_date, start_hour
@@ -141,12 +164,12 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
     )
     blocked_set = {(row.blocked_date, row.start_hour) for row in blocked_result.fetchall()}
 
-    # 기존 time_slots 조회 — DB에서 UTC로 읽어서 KST로 변환 후 키 생성
     slots_result = await db.execute(
         text("""
             SELECT id, start_time, end_time, is_available
             FROM time_slots
             WHERE counselor_id = :counselor_id
+              AND start_time >= NOW() - INTERVAL '2 hour'
               AND start_time >= NOW() - INTERVAL '2 hour'
         """),
         {"counselor_id": counselor_id}
@@ -177,25 +200,11 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
         existing_slots=existing_slots,
     )
 
-    # profile_image 조회 시도 (없으면 None)
-    profile_image = None
-    try:
-        pi_result = await db.execute(
-            text("SELECT profile_image FROM users WHERE id = :id"),
-            {"id": counselor_id}
-        )
-        pi_row = pi_result.fetchone()
-        if pi_row and hasattr(pi_row, 'profile_image'):
-            profile_image = pi_row.profile_image
-    except Exception:
-        pass
-
     return {
         "data": {
             "id": str(counselor.id),
             "name": counselor.name,
             "email": counselor.email,
-            "profile_image": profile_image,
             "created_at": str(counselor.created_at),
             "profile_image": counselor.profile_image,
             "available_slots": all_slots,
