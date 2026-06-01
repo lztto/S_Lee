@@ -1,8 +1,14 @@
 ﻿"""Backend entrypoint."""
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
+
+UPLOAD_ROOT = Path(__file__).resolve().parent / "static" / "uploads"
+UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 # ─── FastAPI 앱 생성 ───
@@ -27,6 +33,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/uploads", StaticFiles(directory=UPLOAD_ROOT), name="uploads")
 
 # ─── 라우터 등록 ───
 from app.api.v1 import auth, counselors, reservations, slots, admin, reviews, journals
