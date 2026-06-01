@@ -1,4 +1,8 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException, status
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import UploadFile, File, Form, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel, EmailStr
@@ -9,6 +13,11 @@ from app.core.security import hash_password, verify_password, create_access_toke
 from app.api.v1.dependencies import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+PROFILE_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "static" / "uploads" / "profiles"
+PROFILE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MAX_PROFILE_IMAGE_SIZE = 2 * 1024 * 1024
+ALLOWED_PROFILE_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 # ─── Pydantic 스키마 ───
@@ -25,6 +34,11 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    profile_image: str | None = None
+    bio: str | None = None
 
 
 # ─── 회원가입 (무조건 client로 가입) ───
@@ -112,6 +126,8 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
         "message": "로그인 성공"
     }
 
+
+# ─── 내 정보 조회 ───
 @router.get("/me")
 async def get_me(
     current_user: dict = Depends(get_current_user),
@@ -123,7 +139,6 @@ async def get_me(
     )
     user = result.fetchone()
 
-    # is_active가 false일 때만 403 반환
     if user and not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -136,4 +151,127 @@ async def get_me(
             "is_active": user.is_active if user else True,
         },
         "message": "success"
+    }
+
+
+# ─── 프로필 수정 (상담사 전용) ───
+@router.patch("/profile")
+async def update_profile(
+    data: ProfileUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # 상담사만 프로필 수정 가능
+    if current_user["role"] not in ["counselor", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="상담사만 프로필을 수정할 수 있습니다"
+        )
+
+    await db.execute(
+        text("""
+            UPDATE users
+            SET
+                profile_image = COALESCE(:profile_image, profile_image),
+                bio = COALESCE(:bio, bio)
+            WHERE id = :id
+        """),
+        {
+            "profile_image": data.profile_image,
+            "bio": data.bio,
+            "id": current_user["id"],
+        }
+    )
+
+    # 업데이트된 정보 반환
+    result = await db.execute(
+        text("SELECT id, email, name, role, profile_image, bio FROM users WHERE id = :id"),
+        {"id": current_user["id"]}
+    )
+    updated = result.fetchone()
+
+    return {
+        "data": {
+            "id": str(updated.id),
+            "email": updated.email,
+            "name": updated.name,
+            "role": updated.role,
+            "profile_image": updated.profile_image,
+            "bio": updated.bio,
+        },
+        "message": "프로필이 수정되었습니다"
+    }
+
+
+@router.patch("/profile/upload")
+async def update_profile_with_upload(
+    request: Request,
+    profile_image: UploadFile | None = File(default=None),
+    bio: str | None = Form(default=None),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user["role"] not in ["counselor", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="상담사만 프로필을 수정할 수 있습니다"
+        )
+
+    image_url = None
+    if profile_image:
+        if profile_image.content_type not in ALLOWED_PROFILE_IMAGE_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="이미지 파일만 업로드할 수 있습니다"
+            )
+
+        content = await profile_image.read()
+        if len(content) > MAX_PROFILE_IMAGE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="프로필 이미지는 2MB 이하만 업로드할 수 있습니다"
+            )
+
+        ext_map = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+        }
+        file_name = f"{current_user['id']}_{uuid4().hex}{ext_map[profile_image.content_type]}"
+        file_path = PROFILE_UPLOAD_DIR / file_name
+        file_path.write_bytes(content)
+        image_url = str(request.base_url).rstrip("/") + f"/uploads/profiles/{file_name}"
+
+    await db.execute(
+        text("""
+            UPDATE users
+            SET
+                profile_image = COALESCE(:profile_image, profile_image),
+                bio = COALESCE(:bio, bio)
+            WHERE id = :id
+        """),
+        {
+            "profile_image": image_url,
+            "bio": bio,
+            "id": current_user["id"],
+        }
+    )
+
+    result = await db.execute(
+        text("SELECT id, email, name, role, profile_image, bio FROM users WHERE id = :id"),
+        {"id": current_user["id"]}
+    )
+    updated = result.fetchone()
+
+    return {
+        "data": {
+            "id": str(updated.id),
+            "email": updated.email,
+            "name": updated.name,
+            "role": updated.role,
+            "profile_image": updated.profile_image,
+            "bio": updated.bio,
+        },
+        "message": "프로필이 수정되었습니다"
     }

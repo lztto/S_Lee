@@ -9,6 +9,7 @@ interface Counselor {
   email: string
   created_at: string
   profile_image: string | null
+  bio: string | null
 }
 
 const avatarColors = [
@@ -457,7 +458,7 @@ const MainPage = () => {
               <p className="text-sm font-light" style={{ color: '#C4A882' }}>검색 결과가 없습니다</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="flex flex-col gap-5">
               {filtered.map((counselor, idx) => {
                 const color = avatarColors[idx % avatarColors.length]
                 return (
@@ -475,31 +476,38 @@ const MainPage = () => {
                   >
                     <div className="absolute top-0 left-0 right-0 h-0.5 scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left"
                       style={{ background: 'linear-gradient(90deg, #C4A882, #D4B892)' }} />
-                    <div className="p-7">
-                      <div className="flex flex-col items-center text-center mb-5">
+                    <div className="p-6 md:p-7">
+                      <div className="flex flex-col md:flex-row md:items-center gap-5 md:gap-7">
                         {counselor.profile_image ? (
-                          <div className="w-24 h-24 rounded-full overflow-hidden mb-4"
+                          <div className="w-24 h-24 rounded-full overflow-hidden flex-shrink-0 mx-auto md:mx-0"
                             style={{ border: '3px solid #F5F0E8' }}>
                             <img src={counselor.profile_image} alt={counselor.name}
                               className="w-full h-full object-cover object-top" />
                           </div>
                         ) : (
-                          <div className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-semibold mb-4"
+                          <div className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-semibold flex-shrink-0 mx-auto md:mx-0"
                             style={{ background: color.bg, color: color.text, fontFamily: "'Playfair Display', serif", border: '3px solid #F5F0E8' }}>
                             {counselor.name.charAt(0)}
                           </div>
                         )}
-                        <p className="tracking-tight mb-1"
-                          style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontWeight: 400, fontSize: '17px' }}>
-                          {counselor.name} 상담사
-                        </p>
-                        <p className="text-xs font-light" style={{ color: '#C4A882' }}>심리 · 코칭</p>
-                      </div>
-                      <div className="h-px mb-5" style={{ background: '#F5F0E8' }} />
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs px-2.5 py-1 rounded-full font-medium"
-                          style={{ background: '#F5F0E8', color: '#C4A882' }}>예약 가능</span>
-                        <button className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-medium"
+                        <div className="flex-1 text-center md:text-left">
+                          <p className="tracking-tight mb-1"
+                            style={{ fontFamily: "'Playfair Display', serif", color: '#2C2420', fontWeight: 400, fontSize: '19px' }}>
+                            {counselor.name} 상담사
+                          </p>
+                          <p className="text-xs font-light mb-3" style={{ color: '#C4A882' }}>심리 · 코칭</p>
+                          <p
+                            className="text-sm font-light leading-relaxed mb-0"
+                            style={{
+                              color: '#6B5B4E',
+                              wordBreak: 'keep-all',
+                            }}
+                          >
+                            {counselor.bio || '상담사 소개가 준비 중입니다.'}
+                          </p>
+                        </div>
+
+                        <button className="flex-shrink-0 px-5 py-2.5 rounded-full text-xs font-medium mx-auto md:mx-0"
                           style={{ background: '#2C2420', color: '#FAF8F5' }}>
                           예약하기 →
                         </button>
