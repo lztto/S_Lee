@@ -21,26 +21,23 @@ KST_OFFSET = timedelta(hours=9)
 
 
 def kst_to_utc(target_date: date, hour: int) -> datetime:
-    """KST 날짜 + 시간 → UTC aware datetime (asyncpg가 timezone 정보로 정확히 저장)"""
-    kst_dt = datetime(target_date.year, target_date.month, target_date.day, hour, 0,
-                      tzinfo=timezone(timedelta(hours=9)))  # KST aware
-    return kst_dt.astimezone(timezone.utc)  # UTC aware
+    """KST 날짜 + 시간 → UTC naive datetime"""
+    # KST 시간을 UTC로 변환: KST - 9시간 = UTC
+    kst_dt = datetime(target_date.year, target_date.month, target_date.day, hour, 0)
+    utc_dt = kst_dt - KST_OFFSET  # naive UTC
+    return utc_dt
 
 
 def build_slots(
     counselor_id: str,
     blocked_set: set,
-    existing_slots: dict,  # key: (kst_date, kst_start_hour), value: {"id": ..., "is_available": ...}
+    existing_slots: dict,
     days_ahead: int = 30,
 ) -> list[dict]:
-    """
-    오늘 포함 days_ahead일 동안 모든 슬롯 반환.
-    start_time/end_time은 UTC ISO string으로 반환 (프론트에서 timeZone: Asia/Seoul 로 표시)
-    """
-    now_utc = datetime.now(timezone.utc)  # UTC aware
+    now_utc = datetime.now(timezone.utc)
     now_kst = now_utc + KST_OFFSET
     today_kst = now_kst.date()
-    cutoff_utc = now_utc + timedelta(minutes=30)  # UTC aware
+    cutoff = now_utc + timedelta(minutes=30)
 
     result = []
 
@@ -48,20 +45,26 @@ def build_slots(
         target_date = today_kst + timedelta(days=delta)
 
         for start_h, end_h in TIME_BLOCKS:
-            # KST → UTC 변환 (naive)
-            start_utc = kst_to_utc(target_date, start_h)
-            end_utc   = kst_to_utc(target_date, end_h)
+            start_utc = datetime(
+                target_date.year, target_date.month, target_date.day,
+                start_h, 0, tzinfo=timezone.utc
+            ) - KST_OFFSET
+            end_utc = datetime(
+                target_date.year, target_date.month, target_date.day,
+                end_h, 0, tzinfo=timezone.utc
+            ) - KST_OFFSET
 
-            # existing_slots 키: (kst_date, kst_start_hour)
-            existing = existing_slots.get((target_date, start_h))
+            existing     = existing_slots.get((target_date, start_h))
+            is_reserved  = bool(existing and not existing["is_available"])
+            is_blocked   = (target_date, start_h) in blocked_set
+            time_passed  = start_utc <= cutoff
 
-            is_reserved = bool(existing and not existing["is_available"])
-            is_blocked  = (target_date, start_h) in blocked_set
-            time_passed = start_utc <= cutoff_utc
+            unavailable = time_passed or is_blocked or is_reserved
 
-            unavailable = is_reserved or is_blocked or time_passed
-
-            slot_id = existing["id"] if existing else f"virtual_{counselor_id}_{target_date}_{start_h}"
+            if existing:
+                slot_id = existing["id"]
+            else:
+                slot_id = f"virtual_{counselor_id}_{target_date}_{start_h}"
 
             if is_reserved:
                 reason = "reserved"
@@ -72,11 +75,11 @@ def build_slots(
             else:
                 reason = None
 
-            # UTC aware ISO string으로 반환
+            # UTC ISO string으로 반환 (+00:00 suffix)
             result.append({
                 "id": slot_id,
-                "start_time": start_utc.isoformat(),
-                "end_time":   end_utc.isoformat(),
+                "start_time": start_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+                "end_time":   end_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
                 "is_available": not unavailable,
                 "reason": reason,
                 "is_virtual": not bool(existing),
@@ -89,7 +92,7 @@ def build_slots(
 async def get_counselors(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         text("""
-            SELECT id, name, email, created_at
+            SELECT id, name, email, created_at, profile_image
             FROM users
             WHERE role = 'counselor' AND is_active = true
             ORDER BY created_at DESC
@@ -98,7 +101,13 @@ async def get_counselors(db: AsyncSession = Depends(get_db)):
     counselors = result.fetchall()
     return {
         "data": [
-            {"id": str(r.id), "name": r.name, "email": r.email, "created_at": str(r.created_at)}
+            {
+                "id": str(r.id),
+                "name": r.name,
+                "email": r.email,
+                "created_at": str(r.created_at),
+                "profile_image": r.profile_image,
+            }
             for r in counselors
         ],
         "message": "success",
@@ -110,7 +119,7 @@ async def get_counselors(db: AsyncSession = Depends(get_db)):
 async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         text("""
-            SELECT id, name, email, created_at
+            SELECT id, name, email, created_at, profile_image
             FROM users
             WHERE id = :id AND role = 'counselor' AND is_active = true
         """),
@@ -138,22 +147,22 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
             SELECT id, start_time, end_time, is_available
             FROM time_slots
             WHERE counselor_id = :counselor_id
-              AND start_time >= NOW() - INTERVAL '1 day'
+              AND start_time >= NOW() - INTERVAL '2 hour'
         """),
         {"counselor_id": counselor_id}
     )
     existing_slots = {}
     for row in slots_result.fetchall():
+        # DB의 start_time은 UTC (TIMESTAMPTZ → Python에서 aware 또는 naive UTC로 옴)
         st = row.start_time
-        # asyncpg는 aware datetime 반환 → utcoffset 확인 후 naive UTC로 통일
-        # DB TIMESTAMPTZ → UTC aware로 통일
-        if hasattr(st, 'tzinfo') and st.tzinfo is not None:
-            st_utc = st.astimezone(timezone.utc)
+        # SQLAlchemy+asyncpg는 timezone-aware로 반환하는 경우도 있음 → naive UTC로 통일
+        if st.tzinfo is not None:
+            st_utc = st.astimezone(timezone.utc).replace(tzinfo=None)
         else:
-            st_utc = st.replace(tzinfo=timezone.utc)
+            st_utc = st  # 이미 naive UTC
 
-        # UTC → KST 변환해서 (kst_date, kst_hour) 키 생성
-        st_kst = st_utc.astimezone(timezone(KST_OFFSET))
+        # UTC → KST
+        st_kst = st_utc + KST_OFFSET
         kst_date = st_kst.date()
         kst_hour = st_kst.hour
 
@@ -188,6 +197,7 @@ async def get_counselor(counselor_id: str, db: AsyncSession = Depends(get_db)):
             "email": counselor.email,
             "profile_image": profile_image,
             "created_at": str(counselor.created_at),
+            "profile_image": counselor.profile_image,
             "available_slots": all_slots,
         },
         "message": "success",
