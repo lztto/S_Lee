@@ -175,6 +175,15 @@ export default function MyReservationsPage() {
 
   const now = new Date()
 
+  // DB에서 오는 ISO string을 안전하게 UTC로 파싱
+  // "+00:00" suffix가 없으면 브라우저가 로컬타임으로 해석하는 문제 방지
+  const parseUTC = (iso: string | undefined) => {
+    if (!iso) return new Date(0)
+    // 이미 timezone 정보 있으면 그대로, 없으면 +00:00 붙이기
+    const normalized = /[Zz]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + '+00:00'
+    return new Date(normalized)
+  }
+
   const tabs: { key: TabType; label: string }[] = [
     { key: 'upcoming', label: '예정된 예약' },
     { key: 'past', label: '지난 예약' },
@@ -183,15 +192,15 @@ export default function MyReservationsPage() {
 
   const getCount = (key: TabType) => reservations.filter((r) => {
     if (key === 'cancelled') return r.status === 'cancelled'
-    if (key === 'upcoming') return r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') >= now
-    if (key === 'past') return r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') < now
+    if (key === 'upcoming') return r.status === 'confirmed' && parseUTC(r.slot?.start_time) >= now
+    if (key === 'past') return r.status === 'confirmed' && parseUTC(r.slot?.start_time) < now
     return false
   }).length
 
   const filteredReservations = reservations.filter((r) => {
     if (activeTab === 'cancelled') return r.status === 'cancelled'
-    if (activeTab === 'upcoming') return r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') >= now
-    if (activeTab === 'past') return r.status === 'confirmed' && new Date(r.slot?.start_time ?? '') < now
+    if (activeTab === 'upcoming') return r.status === 'confirmed' && parseUTC(r.slot?.start_time) >= now
+    if (activeTab === 'past') return r.status === 'confirmed' && parseUTC(r.slot?.start_time) < now
     return false
   })
 
@@ -203,9 +212,11 @@ export default function MyReservationsPage() {
     }
   }
 
-  const getDuration = (start: string, end: string) => {
+  const formatTimeRange = (start: string, end: string) => {
+    const s = new Date(start).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' })
+    const e = new Date(end).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' })
     const diff = (new Date(end).getTime() - new Date(start).getTime()) / 60000
-    return `${diff}분`
+    return `${s} — ${e} (${diff}분)`
   }
 
   return (
@@ -341,9 +352,8 @@ export default function MyReservationsPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {filteredReservations.map((reservation) => {
               const startDt = reservation.slot ? formatDateTime(reservation.slot.start_time) : null
-              const duration = reservation.slot ? getDuration(reservation.slot.start_time, reservation.slot.end_time) : null
-              const isUpcoming = reservation.status === 'confirmed' && new Date(reservation.slot?.start_time ?? '') >= now
-              const isPast = reservation.status === 'confirmed' && new Date(reservation.slot?.start_time ?? '') < now
+              const isUpcoming = reservation.status === 'confirmed' && parseUTC(reservation.slot?.start_time) >= now
+              const isPast = reservation.status === 'confirmed' && parseUTC(reservation.slot?.start_time) < now
               const isCancelling = cancellingId === reservation.id
               const isReviewOpen = reviewOpenId === reservation.id
 
@@ -377,10 +387,12 @@ export default function MyReservationsPage() {
                         {reservation.counselor_name ?? '상담사'}
                       </h3>
 
-                      {startDt && (
+                      {startDt && reservation.slot && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           <p className="text-sm" style={{ color: '#2C2420', margin: 0, fontWeight: 500 }}>{startDt.date}</p>
-                          <p className="text-sm font-light" style={{ color: '#9E8E84', margin: 0 }}>{startDt.time} · {duration}</p>
+                          <p className="text-sm font-light" style={{ color: '#9E8E84', margin: 0 }}>
+                            {formatTimeRange(reservation.slot.start_time, reservation.slot.end_time)}
+                          </p>
                         </div>
                       )}
                     </div>

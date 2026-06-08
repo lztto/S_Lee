@@ -40,8 +40,23 @@ export default function PaymentSuccessPage() {
   }, [])
 
   const fmt = (iso: string) => new Date(iso)
-  const fmtDate = (iso: string) => fmt(iso).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Seoul' })
-  const fmtTime = (iso: string) => fmt(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' })
+  // URL 파라미터에서 + 가 공백으로 변환되는 문제 방지 + UTC 명시
+  const parseISO = (iso: string) => {
+    if (!iso) return new Date(NaN)
+    const fixed = iso.replace(/ /g, '+')  // 공백 → + 복원
+    const normalized = /[Zz]|[+-]\d{2}:?\d{2}$/.test(fixed) ? fixed : fixed + '+00:00'
+    return new Date(normalized)
+  }
+  const fmtDate = (iso: string) => {
+    const d = parseISO(iso)
+    if (isNaN(d.getTime())) return '-'
+    return d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Seoul' })
+  }
+  const fmtTime = (iso: string) => {
+    const d = parseISO(iso)
+    if (isNaN(d.getTime())) return '-'
+    return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' })
+  }
   const fmtAmt  = (v: string)   => Number(v).toLocaleString('ko-KR') + '원'
 
   const name  = reservation?.counselor_name ?? counselorName
