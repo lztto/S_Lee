@@ -24,10 +24,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        settings.FRONTEND_URL,
-        "http://localhost:5173",   # ← 추가
-        "http://localhost:3000",   # ← 추가 (혹시 몰라서)
-        "https://vercel.app",
+        "https://s-lee-frontend.vercel.app",
+        "http://localhost:5173",
     ],
     allow_credentials=True,
     allow_methods=["*"],
