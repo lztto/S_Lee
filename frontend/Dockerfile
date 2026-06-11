@@ -1,1 +1,0 @@
-﻿# Frontend Dockerfile placeholder
